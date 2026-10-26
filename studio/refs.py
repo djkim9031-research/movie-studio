@@ -33,8 +33,9 @@ class Face:
     box: tuple[float, float, float, float]  # x, y, width, height in picture pixels
     landmarks: np.ndarray  # right eye, left eye, nose tip, right and left mouth corners
     score: float
-    embedding: np.ndarray | None
+    embedding: np.ndarray | None  # SFace
     sharpness: float
+    extra: dict = field(default_factory=dict)  # other recognizers' embeddings by name
 
     @property
     def yaw(self) -> float:
@@ -64,15 +65,48 @@ class Report:
         return sum(1 for r in self.used if r.kind == "person")
 
 
-class FaceTools:
-    """YuNet finds faces and five landmarks; SFace turns each face into 128 numbers."""
+# ArcFace's five-point layout of a 112 px face crop: eyes, nose tip, mouth corners, image left to right.
+ARCFACE_112 = np.array([[38.2946, 51.6963], [73.5318, 51.5014], [56.0252, 71.7366], [41.5493, 92.3655],
+                        [70.7299, 92.2041]], dtype=np.float32)
 
-    def __init__(self, detector: Path, recognizer: Path, min_score: float = 0.7):
+
+def align_112(bgr: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
+    matrix, _ = cv2.estimateAffinePartial2D(np.asarray(landmarks, np.float32), ARCFACE_112, method=cv2.LMEDS)
+    return cv2.warpAffine(bgr, matrix, (112, 112), borderValue=0)
+
+
+class AuraFace:
+    """AuraFace v1 (Apache-2.0, ArcFace-style): 512 numbers per face from a 112 px crop aligned on the landmarks."""
+
+    def __init__(self, model: Path):
+        self.net = cv2.dnn.readNetFromONNX(str(model))
+
+    def embed(self, bgr: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
+        blob = cv2.dnn.blobFromImage(align_112(bgr, landmarks), 1 / 127.5, (112, 112), (127.5, 127.5, 127.5),
+                                     swapRB=True)
+        self.net.setInput(blob)
+        vector = self.net.forward().flatten()
+        return vector / np.linalg.norm(vector)
+
+
+def add_extra(bgr: np.ndarray, faces: list, recognizers: dict) -> list:
+    for face in faces:
+        for name, recognizer in recognizers.items():
+            face.extra[name] = recognizer.embed(bgr, face.landmarks)
+    return faces
+
+
+class FaceTools:
+    """YuNet finds faces and five landmarks; SFace turns each face into 128 numbers, and any `extra` recognizers
+    (by name, such as AuraFace) add their own embeddings."""
+
+    def __init__(self, detector: Path, recognizer: Path, min_score: float = 0.7, extra: dict | None = None):
         if hasattr(cv2, "utils") and hasattr(cv2.utils, "logging"):
             cv2.utils.logging.setLogLevel(cv2.utils.logging.LOG_LEVEL_ERROR)
         self.detector = str(detector)
         self.recognizer = cv2.FaceRecognizerSF.create(str(recognizer), "")
         self.min_score = min_score
+        self.extra = extra or {}
 
     def faces(self, bgr: np.ndarray) -> list[Face]:
         h, w = bgr.shape[:2]
@@ -89,7 +123,7 @@ class FaceTools:
             faces.append(Face(box=tuple(float(v) for v in row[:4]), landmarks=row[4:14].reshape(5, 2),
                               score=float(row[14]), embedding=feature / np.linalg.norm(feature),
                               sharpness=sharpness(bgr, row[:4])))
-        return sorted(faces, key=lambda f: -f.box[2] * f.box[3])
+        return add_extra(bgr, sorted(faces, key=lambda f: -f.box[2] * f.box[3]), self.extra)
 
 
 def sharpness(bgr: np.ndarray, box) -> float:

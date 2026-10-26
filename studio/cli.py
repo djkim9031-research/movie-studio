@@ -238,9 +238,13 @@ SCENE_ERRORS = (scene.SceneError, PromptError, RenderError, WorkflowError, Timeo
 
 
 def face_tools(cfg: Config) -> refs.FaceTools:
+    """YuNet and SFace, plus AuraFace once its model set is downloaded."""
     detect, identify = cfg.models["face-detect"], cfg.models["face-id"]
+    extra = {}
+    if "auraface" in cfg.models and not models.present(cfg, "auraface"):
+        extra["auraface"] = refs.AuraFace(cfg.model_root("auraface") / cfg.models["auraface"].files[0].target)
     return refs.FaceTools(cfg.model_root("face-detect") / detect.files[0].path,
-                          cfg.model_root("face-id") / identify.files[0].path)
+                          cfg.model_root("face-id") / identify.files[0].path, extra=extra)
 
 
 def _models_or_exit(cfg: Config, names: list[str]) -> None:
@@ -316,30 +320,34 @@ VIDEO_TYPES = {".mp4", ".mov", ".mkv", ".webm"}
 def identity_profile(person: str = typer.Option(..., help="Alias: the folder name under cast/."),
                      leave_out: list[str] = typer.Option([], "--leave-out",
                                                          help="Photo file names to keep out, such as bench frames.")):
-    """Build a person's face profile from cast/ALIAS/photos: the person in most photos, one face per photo."""
+    """Build a person's face profiles from cast/ALIAS/photos: the person in most photos, one face per photo, one
+    profile per scorer (SFace, and AuraFace once downloaded)."""
     cfg = _state["cfg"]
     _models_or_exit(cfg, ["face-detect", "face-id"])
     try:
-        profile = identity.build_profile(cfg, person, face_tools(cfg), leave_out=leave_out)
+        profiles = identity.build_profiles(cfg, person, face_tools(cfg), leave_out=leave_out)
     except ValueError as error:
         typer.echo(f"FAIL  {error}")
         raise typer.Exit(1)
-    identity.save_profile(cfg, profile)
-    g = profile.genuine
-    typer.echo(f"PASS  profile of {person}: {len(profile.sources)} photos, genuine pairs {len(g)}: median "
-               f"{profile.genuine_median:.3f}, p5 {profile.genuine_p5:.3f}, min {float(g.min()):.3f}; "
-               f"digest {profile.digest}")
+    for profile in profiles.values():
+        identity.save_profile(cfg, profile)
+    first = next(iter(profiles.values()))
+    typer.echo(f"PASS  profile of {person}: {len(first.sources)} photos, digest {identity.digest(profiles)}")
+    for name, p in profiles.items():
+        typer.echo(f"      {name}: genuine pairs {len(p.genuine)}: median {p.genuine_median:.3f}, p5 "
+                   f"{p.genuine_p5:.3f}, min {float(p.genuine.min()):.3f}")
 
 
 @identity_app.command("score")
 def identity_score(files: list[Path] = typer.Argument(..., help="Images or clips to score."),
-                   person: str = typer.Option(..., help="Alias whose profile to score against.")):
-    """Score how much each face looks like the person. Files made from a model whose license forbids face
-    recognition, or of unknown origin, are refused."""
+                   person: str = typer.Option(..., help="Alias whose profiles to score against.")):
+    """Score how much each face looks like the person, as z against their genuine pairs (0 is the middle of their
+    real photo pairs). Files made from a model whose license forbids face recognition, or of unknown origin, are
+    refused."""
     cfg = _state["cfg"]
     _models_or_exit(cfg, ["face-detect", "face-id"])
     try:
-        profile = identity.load_profile(cfg, person)
+        profiles = identity.load_profiles(cfg, person)
     except FileNotFoundError as error:
         typer.echo(f"FAIL  {error}")
         raise typer.Exit(1)
@@ -353,20 +361,20 @@ def identity_score(files: list[Path] = typer.Argument(..., help="Images or clips
             continue
         if path.suffix.lower() in VIDEO_TYPES:
             pinned = [] if provenance.is_camera_original(cfg, path) else provenance.params(path).get("pinned_frames", [0])
-            s = identity.score_clip(profile, tools, path, pinned).summary
+            s = identity.score_clip(profiles, tools, path, pinned).summary
             if s.median is None:
                 typer.echo(f"{path.name}  no scorable face (coverage {s.coverage:.0%})")
                 continue
-            typer.echo(f"{path.name}  median {s.median:.3f} (percentile {identity.percentile(profile, s.median):.0f}), "
-                       f"mid-clip min {s.mid_min:.3f}, dips {s.dips} ({s.dip_seconds:.2f} s), coverage "
-                       f"{s.coverage:.0%}, yaw range {s.yaw_range:.2f}")
+            cosines = ", ".join(f"{k} {v:.3f}" for k, v in sorted(s.by_scorer.items()))
+            typer.echo(f"{path.name}  score {s.median:+.2f} ({cosines}), mid-clip min {s.mid_min:+.2f}, dips {s.dips} "
+                       f"({s.dip_seconds:.2f} s), coverage {s.coverage:.0%}, yaw range {s.yaw_range:.2f}")
         else:
-            frame = identity.score_image(profile, tools, path)
+            frame = identity.score_image(profiles, tools, path)
             if frame.sim is None:
                 typer.echo(f"{path.name}  no face found")
                 continue
-            typer.echo(f"{path.name}  similarity {frame.sim:.3f}, percentile {identity.percentile(profile, frame.sim):.0f} "
-                       f"of {person}'s real pairs, face {frame.px:.0f} px, yaw {frame.yaw:.2f}")
+            cosines = ", ".join(f"{k} {v:.3f}" for k, v in sorted(frame.sims.items()))
+            typer.echo(f"{path.name}  score {frame.sim:+.2f} ({cosines}), face {frame.px:.0f} px, yaw {frame.yaw:.2f}")
     if refused:
         raise typer.Exit(1)
 
@@ -413,34 +421,47 @@ def bench_compare(runs: list[str] = typer.Argument(..., help="Run names under be
                   person: str = typer.Option(..., help="Alias the runs were scored against.")):
     """Each run against the first, cell by cell, by the round rule; writes a side-by-side page."""
     cfg = _state["cfg"]
-    _models_or_exit(cfg, ["face-detect", "face-id"])
-    try:
-        profile = identity.load_profile(cfg, person)
-    except FileNotFoundError as error:
-        typer.echo(f"FAIL  {error}")
-        raise typer.Exit(1)
-    tools, loaded = face_tools(cfg), []
+    loaded = []
     for name in runs:
         run_dir = cfg.data_root / "bench" / scene.clean_name(name)
         if not (run_dir / "results.json").is_file():
             typer.echo(f"FAIL  no bench run {name} in {run_dir.parent}")
             raise typer.Exit(1)
-        data = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
-        loaded.append((run_dir.name, bench.fill_start_scores(cfg, data, run_dir, profile, tools)))
+        loaded.append((run_dir.name, json.loads((run_dir / "results.json").read_text(encoding="utf-8"))))
     try:
-        report = bench.compare([data for _, data in loaded], delta=profile.genuine_sd / 4)
+        report = bench.compare([data for _, data in loaded], delta=bench.DELTA)
     except ValueError as error:
         typer.echo(f"FAIL  {error}")
         raise typer.Exit(1)
-    typer.echo(f"delta {report['delta']:.3f}: a quarter of the spread of {person}'s real photo pairs; per motion: "
-               f"median (drift from the start frame)")
+    typer.echo(f"scores are z against {person}'s genuine pairs; delta {report['delta']:.2f}; per motion: median "
+               f"(drift from the start frame)")
     for row in report["variants"]:
-        motions = "  ".join(f"{m} {v['median']:.3f} ({v['drift'] or 0:+.3f})" for m, v in row["motions"].items())
+        motions = "  ".join(f"{m} {v['median']:+.2f} ({v['drift'] or 0:+.2f})" for m, v in row["motions"].items())
         dips = sum(v["dips"] for v in row["motions"].values())
-        paired = (f"  gain {row['gain']:+.3f} wins {row['photo_wins']}/{row['photos']}"
+        paired = (f"  gain {row['gain']:+.2f} wins {row['photo_wins']}/{row['photos']}"
                   if row.get("gain") is not None else "")
         typer.echo(f"{row['variant']:<22} {motions}  dips {dips}  {row['render_s'] or 0:.0f} s/clip{paired}  "
                    f"{row['verdict']}")
     page = cfg.data_root / "bench" / f"compare-{datetime.now():%Y%m%d-%H%M%S}.html"
     write_private(page, bench.compare_page(loaded, report))
     typer.echo(f"PASS  page: {page}")
+
+
+@bench_app.command("rescore")
+def bench_rescore(runs: list[str] = typer.Argument(..., help="Run names under bench/."),
+                  person: str = typer.Option(..., help="Alias to score against.")):
+    """Score finished runs again from their clips against the person's current profiles."""
+    cfg = _state["cfg"]
+    _models_or_exit(cfg, ["face-detect", "face-id"])
+    tools = face_tools(cfg)
+    for name in runs:
+        run_dir = cfg.data_root / "bench" / scene.clean_name(name)
+        if not (run_dir / "results.json").is_file():
+            typer.echo(f"FAIL  no bench run {name} in {run_dir.parent}")
+            raise typer.Exit(1)
+        try:
+            bench.rescore(cfg, alias=person, tools=tools, run_dir=run_dir, echo=typer.echo)
+        except (FileNotFoundError, RuntimeError, ValueError) as error:
+            typer.echo(f"FAIL  {error}")
+            raise typer.Exit(1)
+        typer.echo(f"PASS  rescored {run_dir.name}")

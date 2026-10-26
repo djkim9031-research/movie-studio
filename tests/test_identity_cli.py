@@ -39,7 +39,7 @@ def test_score_refuses_a_file_without_provenance_and_scores_a_camera_photo(tmp_p
     photo = tmp_path / "cast" / "me" / "photos" / "me0.jpg"
     result = run(cfg_file, "identity", "score", "--person", "me", str(photo))
     assert result.exit_code == 0, result.output
-    assert "me0.jpg  similarity" in result.output and "percentile" in result.output
+    assert "me0.jpg  score" in result.output and "sface" in result.output
 
 
 def test_bench_identity_runs_the_variant_and_prints_a_summary_per_motion(tmp_path, monkeypatch):
@@ -72,9 +72,9 @@ def test_bench_compare_prints_each_variant_against_the_first_and_writes_a_page(t
     from tests.test_bench import grid, results
     cfg_file, tools = setup(tmp_path, monkeypatch)
     assert run(cfg_file, "identity", "profile", "--person", "me").exit_code == 0
-    digest = identity.load_profile(Config.model_validate({"data_root": str(tmp_path)}), "me").digest
-    for name, data in [("base", results("ltx-int8-2stage", grid(0.60), digest=digest)),
-                       ("r1", results("wan-4step-1022", grid(0.60, bump=0.05), digest=digest))]:
+    digest = identity.digest(identity.load_profiles(Config.model_validate({"data_root": str(tmp_path)}), "me"))
+    for name, data in [("base", results("ltx-int8-2stage", grid(0.0), digest=digest)),
+                       ("r1", results("wan-4step-1022", grid(0.0, bump=0.4), digest=digest))]:
         (tmp_path / "bench" / name).mkdir(parents=True)
         (tmp_path / "bench" / name / "results.json").write_text(json.dumps(data))
     result = run(cfg_file, "bench", "compare", "--person", "me", "base", "r1")

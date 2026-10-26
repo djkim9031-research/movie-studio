@@ -40,8 +40,8 @@ def test_run_renders_every_cell_scores_it_against_the_profile_without_its_start_
         dest.write_bytes(b"mp4 " + name.encode())
         return SimpleNamespace(elapsed_s=30.0)
 
-    def score_clip(profile, tools, path, pinned):
-        scored.append((tuple(profile.sources), pinned))
+    def score_clip(profiles, tools, path, pinned):
+        scored.append((tuple(next(iter(profiles.values())).sources), pinned))
         return ClipScore(frames=[], summary=Summary(median=0.6, mid_min=0.5, dips=0, dip_seconds=0.0, coverage=0.9,
                                                     yaw_range=0.3, scored=100))
 
@@ -58,7 +58,8 @@ def test_run_renders_every_cell_scores_it_against_the_profile_without_its_start_
         assert pinned == [0] and len(sources) == 3
     assert all(c["start"] + ".jpg" not in s for c, (s, _) in zip(results["cells"], scored))
     saved = json.loads((run_dir / "results.json").read_text())
-    assert saved["variant"] == "ltx-int8-2stage" and saved["profile"] == identity.load_profile(cfg, "me").digest
+    assert saved["variant"] == "ltx-int8-2stage"
+    assert saved["profile"] == identity.digest(identity.load_profiles(cfg, "me"))
     clip = run_dir / "clips" / results["cells"][0]["clip"]
     assert provenance.params(clip)["pinned_frames"] == [0] and provenance.problems(cfg, clip) == []
     assert (run_dir / "review.html").exists() and len(start_of) == 6
@@ -134,3 +135,32 @@ def test_a_motion_that_gets_worse_fails_the_round_even_with_an_overall_gain():
     report = bench.compare([base, results("mixed", medians)], delta=0.02)
     row = [r for r in report["variants"] if r["variant"] == "mixed"][0]
     assert row["verdict"] == "a motion got worse"
+
+
+def test_rescore_scores_every_clip_again_against_the_current_profiles(cfg, tmp_path, monkeypatch):
+    _, tools = make_photos(cfg)
+    identity.save_profile(cfg, identity.build_profile(cfg, "me", tools))
+    run_dir = tmp_path / "run"
+    (run_dir / "starts").mkdir(parents=True)
+    (run_dir / "clips").mkdir()
+    photo = cfg.data_root / "cast" / "me" / "photos" / "me1.jpg"
+    start = run_dir / "starts" / "me1.png"
+    start.write_bytes(b"start")
+    provenance.write(cfg, start, kind="start", models=[], inputs=[photo], params={})
+    clip = run_dir / "clips" / "me1-turn.mp4"
+    clip.write_bytes(b"clip")
+    provenance.write(cfg, clip, kind="clip", models=["ltx25-int8"], inputs=[start], params={"pinned_frames": [0, -1]})
+    old = {"variant": "v", "profile": "old", "cells": [{"start": "me1", "motion": "turn", "seed": 1, "clip": clip.name,
+                                                       "median": 0.6, "percentile": 40.0, "render_s": 30.0}]}
+    (run_dir / "results.json").write_text(json.dumps(old))
+    seen = []
+    monkeypatch.setattr(bench.identity, "score_clip", lambda profiles, tools, path, pinned: seen.append(
+        (sorted(next(iter(profiles.values())).sources), pinned)) or ClipScore(frames=[], summary=Summary(
+            median=0.2, mid_min=-0.4, dips=1, dip_seconds=0.3, coverage=0.8, yaw_range=0.4, scored=90)))
+    monkeypatch.setattr(bench.identity, "score_image",
+                        lambda profiles, tools, path: identity.Frame(t=0.0, sim=0.5, yaw=0.0, px=400))
+    results = bench.rescore(cfg, alias="me", tools=tools, run_dir=run_dir, echo=print)
+    cell = results["cells"][0]
+    assert seen == [(["me0.jpg", "me2.jpg", "me3.jpg"], [0, -1])]
+    assert cell["median"] == 0.2 and cell["drift"] == pytest.approx(-0.3) and "percentile" not in cell
+    assert results["profile"] == identity.digest(identity.load_profiles(cfg, "me"))

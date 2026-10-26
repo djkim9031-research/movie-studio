@@ -4,7 +4,7 @@ clips. Callers check studio.provenance first: only files whose whole lineage all
 import hashlib
 import io
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import cv2
@@ -22,6 +22,9 @@ PIN_MARGIN = 2
 SMOOTH_S = 0.3
 DIP_S = 0.25
 MAX_PHOTOS = 500
+# SFace from OpenCV, AuraFace v1; both Apache-2.0. A frame's score is the mean of their z-scores against the person's
+# own genuine pairs, so the two sit on one scale (percentiles would flatten everything below the genuine range).
+SCORERS = ("sface", "auraface")
 
 
 @dataclass
@@ -55,6 +58,14 @@ class Profile:
     def genuine_sd(self) -> float:
         return float(np.std(self.genuine))
 
+    @property
+    def genuine_mean(self) -> float:
+        return float(np.mean(self.genuine))
+
+    def z(self, sim: float) -> float:
+        """How many genuine standard deviations `sim` sits from the mean of the person's real pairs."""
+        return (sim - self.genuine_mean) / (self.genuine_sd or 1.0)
+
     def without(self, source: str) -> "Profile":
         """The profile without one photo, so that photo can be scored as unseen."""
         keep = [i for i, s in enumerate(self.sources) if s != source]
@@ -68,9 +79,10 @@ class Profile:
 @dataclass
 class Frame:
     t: float
-    sim: float | None
+    sim: float | None  # the combined score: mean z over the scorers
     yaw: float | None
     px: float | None
+    sims: dict = field(default_factory=dict)  # each scorer's cosine similarity
 
 
 @dataclass
@@ -82,6 +94,7 @@ class Summary:
     coverage: float
     yaw_range: float
     scored: int
+    by_scorer: dict = field(default_factory=dict)  # median cosine per scorer over the scored frames
 
 
 @dataclass
@@ -90,19 +103,48 @@ class ClipScore:
     summary: Summary
 
 
-def build_profile(cfg: Config, alias: str, tools, leave_out=()) -> Profile:
-    """The person in most of cast/ALIAS/photos; `leave_out` names photos kept out, such as bench start frames."""
+def _embedding(face, scorer: str):
+    return face.embedding if scorer == "sface" else face.extra.get(scorer)
+
+
+def build_profiles(cfg: Config, alias: str, tools, leave_out=(), scorers=SCORERS) -> dict[str, Profile]:
+    """The person in most of cast/ALIAS/photos, one face per photo, one profile per scorer; `leave_out` names photos
+    kept out, such as bench start frames."""
     pictures, _ = refs.gather([cfg.data_root / "cast" / alias / "photos"], limit=MAX_PHOTOS)
     pictures = [p for p in pictures if p.name not in set(leave_out)]
     faces = {p.name: tools.faces(refs.load(p)) for p in pictures}
     subject = refs.find_subject(faces)
     if len(subject) < 2:
         raise ValueError(f"{len(subject)} usable photos of {alias}; a profile needs at least 2")
-    embeddings = np.stack([f.embedding for _, f in subject])
-    sims = embeddings @ embeddings.T
-    genuine = np.sort(sims[np.triu_indices(len(subject), 1)])
-    return Profile(alias=alias, scorer="sface", embeddings=embeddings, sources=[name for name, _ in subject],
-                   genuine=genuine, yaws=[round(f.yaw, 3) for _, f in subject])
+    profiles = {}
+    for scorer in scorers:
+        if any(_embedding(f, scorer) is None for _, f in subject):
+            continue
+        embeddings = np.stack([_embedding(f, scorer) for _, f in subject])
+        sims = embeddings @ embeddings.T
+        profiles[scorer] = Profile(alias=alias, scorer=scorer, embeddings=embeddings,
+                                   sources=[name for name, _ in subject],
+                                   genuine=np.sort(sims[np.triu_indices(len(subject), 1)]),
+                                   yaws=[round(f.yaw, 3) for _, f in subject])
+    return profiles
+
+
+def build_profile(cfg: Config, alias: str, tools, leave_out=()) -> Profile:
+    return build_profiles(cfg, alias, tools, leave_out, scorers=("sface",))["sface"]
+
+
+def digest(profiles: dict[str, Profile]) -> str:
+    joined = ";".join(f"{name}:{profiles[name].digest}" for name in sorted(profiles))
+    return hashlib.sha256(joined.encode()).hexdigest()[:16]
+
+
+def dip_line(profiles: dict[str, Profile]) -> float:
+    """A combined score below this is under the person's genuine 5th percentile, on average over the scorers."""
+    return float(np.mean([p.z(p.genuine_p5) for p in profiles.values()]))
+
+
+def without(profiles: dict[str, Profile], source: str) -> dict[str, Profile]:
+    return {name: p.without(source) for name, p in profiles.items()}
 
 
 def _profile_dir(cfg: Config, alias: str) -> Path:
@@ -130,6 +172,15 @@ def load_profile(cfg: Config, alias: str, scorer: str = "sface") -> Profile:
     with np.load(folder / f"{scorer}.npz") as arrays:
         return Profile(alias=alias, scorer=scorer, embeddings=arrays["embeddings"], sources=meta["sources"],
                        genuine=arrays["genuine"], yaws=arrays["yaws"].tolist())
+
+
+def load_profiles(cfg: Config, alias: str, scorers=SCORERS) -> dict[str, Profile]:
+    """The person's saved profiles, for the scorers that have one."""
+    folder = _profile_dir(cfg, alias)
+    found = {s: load_profile(cfg, alias, s) for s in scorers if (folder / f"{s}.npz").is_file()}
+    if not found:
+        raise FileNotFoundError(f"no profile of {alias}; run: uv run studio identity profile --person {alias}")
+    return found
 
 
 def percentile(profile: Profile, sim: float) -> float:
@@ -178,19 +229,24 @@ def summarize(frames: list[Frame], pinned: list[int], genuine_p5: float, min_px:
                    scored=len(scored))
 
 
-def _frame(profile: Profile, tools, bgr: np.ndarray, t: float) -> Frame:
+def _frame(profiles: dict[str, Profile], tools, bgr: np.ndarray, t: float) -> Frame:
     faces = tools.faces(bgr)
-    if not faces or faces[0].embedding is None:
+    if not faces:
         return Frame(t, None, None, None)
     face = faces[0]
-    return Frame(t, float(face.embedding @ profile.centroid), face.yaw, face.box[3])
+    sims = {name: float(_embedding(face, name) @ p.centroid) for name, p in profiles.items()
+            if _embedding(face, name) is not None}
+    if not sims:
+        return Frame(t, None, None, None)
+    combined = float(np.mean([profiles[name].z(sim) for name, sim in sims.items()]))
+    return Frame(t, combined, face.yaw, face.box[3], sims)
 
 
-def score_image(profile: Profile, tools, path: Path) -> Frame:
-    return _frame(profile, tools, refs.load(Path(path)), 0.0)
+def score_image(profiles: dict[str, Profile], tools, path: Path) -> Frame:
+    return _frame(profiles, tools, refs.load(Path(path)), 0.0)
 
 
-def score_clip(profile: Profile, tools, path: Path, pinned: list[int]) -> ClipScore:
+def score_clip(profiles: dict[str, Profile], tools, path: Path, pinned: list[int]) -> ClipScore:
     capture = cv2.VideoCapture(str(path))
     if not capture.isOpened():
         raise ValueError(f"cannot read {path}")
@@ -201,8 +257,14 @@ def score_clip(profile: Profile, tools, path: Path, pinned: list[int]) -> ClipSc
             ok, bgr = capture.read()
             if not ok:
                 break
-            frames.append(_frame(profile, tools, bgr, index / fps))
+            frames.append(_frame(profiles, tools, bgr, index / fps))
             index += 1
     finally:
         capture.release()
-    return ClipScore(frames=frames, summary=summarize(frames, pinned, profile.genuine_p5))
+    summary = summarize(frames, pinned, dip_line(profiles))
+    mask = pinned_mask(len(frames), pinned)
+    scored = [f for f, pin in zip(frames, mask) if not pin and f.sim is not None and f.px >= MIN_FACE_PX
+              and abs(f.yaw) <= MAX_YAW]
+    summary.by_scorer = {name: float(np.median([f.sims[name] for f in scored if name in f.sims]))
+                         for name in profiles if any(name in f.sims for f in scored)}
+    return ClipScore(frames=frames, summary=summary)

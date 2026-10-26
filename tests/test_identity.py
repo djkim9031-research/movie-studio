@@ -103,9 +103,11 @@ def test_score_clip_reads_every_frame_with_its_time(tmp_path):
     profile = identity.Profile(alias="me", scorer="sface", embeddings=np.stack([ME]), sources=["a"],
                                genuine=np.array([0.5, 0.6, 0.7]), yaws=[0.0])
     tools = FakeTools({(180, 320): [face(100, 40, 120, ME)]})
-    result = identity.score_clip(profile, tools, clip, pinned=[0])
+    result = identity.score_clip({"sface": profile}, tools, clip, pinned=[0])
     assert len(result.frames) == 24 and result.frames[12].t == pytest.approx(0.5)
-    assert result.summary.median == pytest.approx(1.0, abs=1e-5)
+    assert result.frames[12].sims["sface"] == pytest.approx(1.0, abs=1e-5)
+    assert result.summary.median == pytest.approx(profile.z(1.0), abs=1e-4)
+    assert result.summary.by_scorer["sface"] == pytest.approx(1.0, abs=1e-5)
 
 
 def test_a_profile_without_one_photo_scores_that_photo_as_unseen(cfg):
@@ -114,3 +116,49 @@ def test_a_profile_without_one_photo_scores_that_photo_as_unseen(cfg):
     rest = profile.without("me1.jpg")
     assert rest.sources == ["me0.jpg", "me2.jpg", "me3.jpg"] and len(rest.genuine) == 3
     assert not np.allclose(rest.centroid, profile.centroid)
+
+
+class TwoScorerTools(FakeTools):
+    """Each face carries an AuraFace-like embedding equal to its SFace one, rotated."""
+
+    def faces(self, bgr):
+        found = super().faces(bgr)
+        for f in found:
+            f.extra["auraface"] = np.roll(f.embedding, 1)
+        return found
+
+
+def test_profiles_are_built_per_scorer_and_saved_side_by_side(cfg):
+    _, tools = make_photos(cfg)
+    tools = TwoScorerTools(tools.by_size)
+    profiles = identity.build_profiles(cfg, "me", tools, scorers=("sface", "auraface"))
+    assert set(profiles) == {"sface", "auraface"}
+    assert np.allclose(profiles["auraface"].embeddings, np.roll(profiles["sface"].embeddings, 1, axis=1))
+    for p in profiles.values():
+        identity.save_profile(cfg, p)
+    again = identity.load_profiles(cfg, "me")
+    assert set(again) == {"sface", "auraface"} and identity.digest(again) == identity.digest(profiles)
+
+
+def test_z_scores_put_both_scorers_on_the_genuine_scale():
+    profile = identity.Profile(alias="me", scorer="sface", embeddings=np.zeros((0, 3)), sources=[],
+                               genuine=np.array([0.5, 0.6, 0.7]), yaws=[])
+    assert profile.z(0.6) == pytest.approx(0.0)
+    assert profile.z(0.7) == pytest.approx(0.1 / np.std([0.5, 0.6, 0.7]))
+
+
+def test_a_frame_score_is_the_mean_z_of_the_scorers_and_keeps_each_cosine(cfg):
+    _, tools = make_photos(cfg)
+    tools = TwoScorerTools(tools.by_size)
+    profiles = identity.build_profiles(cfg, "me", tools, scorers=("sface", "auraface"))
+    picture = cfg.data_root / "cast" / "me" / "photos" / "me0.jpg"
+    frame = identity.score_image(profiles, tools, picture)
+    expected = np.mean([profiles[s].z(frame.sims[s]) for s in ("sface", "auraface")])
+    assert set(frame.sims) == {"sface", "auraface"} and frame.sim == pytest.approx(expected)
+
+
+def test_the_dip_line_of_a_combined_score_is_the_mean_z_of_each_genuine_fifth_percentile(cfg):
+    _, tools = make_photos(cfg)
+    profiles = identity.build_profiles(cfg, "me", TwoScorerTools(tools.by_size), scorers=("sface", "auraface"))
+    line = identity.dip_line(profiles)
+    assert line == pytest.approx(np.mean([p.z(p.genuine_p5) for p in profiles.values()]))

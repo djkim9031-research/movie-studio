@@ -17,6 +17,8 @@ from studio.video_graphs import WAN_LORAS_1022, ltx_single, render_graph, wan_i2
 
 SPEC = Path(__file__).resolve().parent.parent / "config" / "bench" / "identity.yaml"
 SIZE = (1280, 704)
+# The round rule's least gain worth having: a quarter of a genuine standard deviation (scores are z).
+DELTA = 0.25
 LTX_BF16 = "ltx-2.5-22b-distilled-transformer-bf16.safetensors"
 
 # Variant -> the model sets that make its clips and the frames copied from the start image (-1 is the last frame).
@@ -71,20 +73,33 @@ def render(cfg: Config, variant: str, start: Path, prompt: str, seconds: int, se
     return render_graph(cfg, graph, {"START": start}, name=name, dest=dest)
 
 
+def score_cell(cell: dict, clip: Path, start: Path, profiles: dict, tools, pinned: list[int]) -> dict:
+    """The clip's scores against `profiles` (which leave out the cell's start photo) and its drift from the start
+    frame, all in the combined z scale."""
+    s = identity.score_clip(profiles, tools, clip, pinned=pinned).summary
+    start_sim = identity.score_image(profiles, tools, start).sim
+    cell.update(median=s.median, mid_min=s.mid_min, dips=s.dips, dip_seconds=s.dip_seconds,
+                coverage=round(s.coverage, 3), yaw_range=round(s.yaw_range, 3), by_scorer=s.by_scorer,
+                start_sim=start_sim, drift=None if s.median is None or start_sim is None else s.median - start_sim)
+    return cell
+
+
+def _source(profiles: dict, stem: str) -> str:
+    return next(source for source in next(iter(profiles.values())).sources if Path(source).stem == stem)
+
+
 def run(cfg: Config, *, alias: str, variant: str, tools, run_dir: Path, echo, count: int = 6, seeds=None,
         render=render) -> dict:
     if variant not in VARIANTS:
         raise ValueError(f"unknown variant {variant}; known: {', '.join(VARIANTS)}")
     spec = yaml.safe_load(SPEC.read_text(encoding="utf-8"))
-    profile = identity.load_profile(cfg, alias)
+    profiles = identity.load_profiles(cfg, alias)
     starts_dir, clips_dir = private_dir(run_dir / "starts"), private_dir(run_dir / "clips")
-    results = {"variant": variant, "alias": alias, "profile": profile.digest, "seconds": spec["seconds"],
-               "cells": []}
+    results = {"variant": variant, "alias": alias, "profile": identity.digest(profiles),
+               "scorers": sorted(profiles), "seconds": spec["seconds"], "cells": []}
     for photo, face in choose_starts(cfg, alias, tools, count):
         start = make_start(cfg, photo, face, starts_dir / f"{photo.stem}.png")
-        cell_profile = profile.without(photo.name)
-        # The start frame's own score: drift is how far a clip falls from it.
-        start_sim = identity.score_image(cell_profile, tools, start).sim
+        cell_profiles = identity.without(profiles, photo.name)
         for motion, prompt in spec["motions"].items():
             for seed in seeds or spec["seeds"]:
                 clip = clips_dir / f"{photo.stem}-{motion}-{variant}-s{seed}.mp4"
@@ -97,14 +112,8 @@ def run(cfg: Config, *, alias: str, variant: str, tools, run_dir: Path, echo, co
                 problems = provenance.problems(cfg, clip)
                 if problems:
                     raise RuntimeError("; ".join(problems))
-                s = identity.score_clip(cell_profile, tools, clip, pinned=pinned).summary
-                cell = {"start": photo.stem, "motion": motion, "seed": seed, "clip": clip.name,
-                        "median": s.median, "mid_min": s.mid_min, "dips": s.dips, "dip_seconds": s.dip_seconds,
-                        "coverage": round(s.coverage, 3), "yaw_range": round(s.yaw_range, 3),
-                        "percentile": None if s.median is None else identity.percentile(cell_profile, s.median),
-                        "start_sim": start_sim,
-                        "drift": None if s.median is None or start_sim is None else s.median - start_sim,
-                        "render_s": round(made.elapsed_s, 1)}
+                cell = score_cell({"start": photo.stem, "motion": motion, "seed": seed, "clip": clip.name,
+                                   "render_s": round(made.elapsed_s, 1)}, clip, start, cell_profiles, tools, pinned)
                 results["cells"].append(cell)
                 write_private(run_dir / "results.json", json.dumps(results, indent=1) + "\n")
                 write_private(run_dir / "review.html", review_page(results))
@@ -112,13 +121,35 @@ def run(cfg: Config, *, alias: str, variant: str, tools, run_dir: Path, echo, co
     return results
 
 
+def rescore(cfg: Config, *, alias: str, tools, run_dir: Path, echo) -> dict:
+    """Scores a finished run again from its clips against the person's current profiles."""
+    results = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
+    profiles = identity.load_profiles(cfg, alias)
+    for cell in results["cells"]:
+        clip, start = run_dir / "clips" / cell["clip"], run_dir / "starts" / f"{cell['start']}.png"
+        problems = provenance.problems(cfg, clip)
+        if problems:
+            raise RuntimeError("; ".join(problems))
+        pinned = provenance.params(clip).get("pinned_frames", [0])
+        score_cell(cell, clip, start, identity.without(profiles, _source(profiles, cell["start"])), tools, pinned)
+        cell.pop("percentile", None)
+        echo(line(cell))
+    results.update(profile=identity.digest(profiles), scorers=sorted(profiles))
+    write_private(run_dir / "results.json", json.dumps(results, indent=1) + "\n")
+    write_private(run_dir / "review.html", review_page(results))
+    return results
+
+
 def line(cell: dict) -> str:
+    """Scores are z against the person's genuine pairs (0 is the middle of their real photo pairs); drift is the
+    change from the start frame; each scorer's median cosine follows."""
     if cell["median"] is None:
         return f"{cell['start']:<10} {cell['motion']:<6} no scorable face (coverage {cell['coverage']:.0%})"
-    drift = f"drift {cell['drift']:+.3f} " if cell.get("drift") is not None else ""
-    return (f"{cell['start']:<10} {cell['motion']:<6} median {cell['median']:.3f} (p{cell['percentile']:.0f}) "
-            f"{drift}min {cell['mid_min']:.3f} dips {cell['dips']} coverage {cell['coverage']:.0%} "
-            f"yaw {cell['yaw_range']:.2f} {cell['render_s']:.0f} s")
+    drift = f"drift {cell['drift']:+.2f} " if cell.get("drift") is not None else ""
+    cosines = " ".join(f"{name} {value:.3f}" for name, value in sorted(cell.get("by_scorer", {}).items()))
+    return (f"{cell['start']:<10} {cell['motion']:<6} score {cell['median']:+.2f} {drift}min {cell['mid_min']:+.2f} "
+            f"dips {cell['dips']} coverage {cell['coverage']:.0%} yaw {cell['yaw_range']:.2f} {cosines} "
+            f"{cell['render_s']:.0f} s")
 
 
 def review_page(results: dict) -> str:
@@ -154,26 +185,11 @@ def _mean(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
 
 
-def fill_start_scores(cfg: Config, run: dict, run_dir: Path, profile: identity.Profile, tools) -> dict:
-    """Adds each cell's start-frame score and drift where a run was made before they were recorded."""
-    by_stem = {Path(source).stem: source for source in profile.sources}
-    scores = {}
-    for cell in run["cells"]:
-        if cell.get("start_sim") is not None or cell["start"] not in by_stem:
-            continue
-        if cell["start"] not in scores:
-            start = run_dir / "starts" / f"{cell['start']}.png"
-            scores[cell["start"]] = identity.score_image(profile.without(by_stem[cell["start"]]), tools, start).sim
-        cell["start_sim"] = scores[cell["start"]]
-        cell["drift"] = None if cell["median"] is None or cell["start_sim"] is None else cell["median"] - cell["start_sim"]
-    return run
-
-
 def compare(runs: list[dict], delta: float) -> dict:
     """Each run against the first, cell by cell (same start photo, motion and seed), by the round rule: a mean gain
     of at least `delta`, a win on all but at most one start photo, and no motion losing more than delta / 2."""
     if len({run["profile"] for run in runs}) > 1:
-        raise ValueError("these runs were scored against different profiles; score them on one profile")
+        raise ValueError("these runs were scored against different profiles; run: uv run studio bench rescore")
     key = lambda c: (c["start"], c["motion"], c["seed"])  # noqa: E731
     base = {key(c): c for c in runs[0]["cells"] if c["median"] is not None}
     rows = []

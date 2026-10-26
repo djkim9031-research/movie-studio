@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import cv2
 import numpy as np
 import pytest
@@ -187,3 +189,27 @@ def test_face_frame_widens_to_a_medium_shot_when_the_photo_allows():
     me = face(2800, 1000, 400, ME)
     x0, y0, x1, y1 = refs.face_frame(landscape, me, face_frac=0.3)
     assert 400 / (y1 - y0) == pytest.approx(0.3, rel=0.02)
+
+
+AURAFACE = Path.home() / "studio-data" / "models" / "faces" / "auraface_v1.onnx"
+
+
+@pytest.mark.skipif(not AURAFACE.exists(), reason="run: uv run studio models fetch auraface")
+def test_auraface_aligns_five_landmarks_to_112_px_and_returns_a_unit_vector():
+    rng = np.random.default_rng(1)
+    picture = rng.integers(0, 255, (600, 600, 3), dtype=np.uint8)
+    me = face(200, 150, 240, None)
+    aligned = refs.align_112(picture, me.landmarks)
+    assert aligned.shape == (112, 112, 3)
+    vector = refs.AuraFace(AURAFACE).embed(picture, me.landmarks)
+    assert vector.shape == (512,) and np.linalg.norm(vector) == pytest.approx(1.0, abs=1e-5)
+
+
+def test_face_tools_add_auraface_embeddings_when_given_one():
+    class Recognizer:
+        def embed(self, bgr, landmarks):
+            return np.ones(4) / 2
+
+    me = face(10, 10, 100, ME)
+    refs.add_extra(np.zeros((200, 200, 3), np.uint8), [me], {"auraface": Recognizer()})
+    assert me.extra["auraface"].tolist() == [0.5, 0.5, 0.5, 0.5]
