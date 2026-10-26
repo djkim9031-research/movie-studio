@@ -64,3 +64,22 @@ def test_bench_identity_runs_the_variant_and_prints_a_summary_per_motion(tmp_pat
     assert seen["run_dir"] == tmp_path / "bench" / "baseline"
     assert "still   median 0.600" in result.output and "turn    median 0.400" in result.output
     assert "dips 1" in result.output
+
+
+def test_bench_compare_prints_each_variant_against_the_first_and_writes_a_page(tmp_path, monkeypatch):
+    import json
+    from studio import identity
+    from tests.test_bench import grid, results
+    cfg_file, tools = setup(tmp_path, monkeypatch)
+    assert run(cfg_file, "identity", "profile", "--person", "me").exit_code == 0
+    digest = identity.load_profile(Config.model_validate({"data_root": str(tmp_path)}), "me").digest
+    for name, data in [("base", results("ltx-int8-2stage", grid(0.60), digest=digest)),
+                       ("r1", results("wan-4step-1022", grid(0.60, bump=0.05), digest=digest))]:
+        (tmp_path / "bench" / name).mkdir(parents=True)
+        (tmp_path / "bench" / name / "results.json").write_text(json.dumps(data))
+    result = run(cfg_file, "bench", "compare", "--person", "me", "base", "r1")
+    assert result.exit_code == 0, result.output
+    assert "ltx-int8-2stage" in result.output and "baseline" in result.output
+    assert "wan-4step-1022" in result.output and "passes screening" in result.output
+    pages = list((tmp_path / "bench").glob("compare-*.html"))
+    assert len(pages) == 1 and "r1/clips/p0-still.mp4" in pages[0].read_text()

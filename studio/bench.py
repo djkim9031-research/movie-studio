@@ -4,7 +4,6 @@ person's profile without that cell's start photo."""
 
 import html
 import json
-import os
 from pathlib import Path
 
 import cv2
@@ -12,7 +11,7 @@ import yaml
 
 from studio import identity, provenance, refs
 from studio.config import Config
-from studio.fs import private_dir
+from studio.fs import private_dir, write_private
 from studio.render import render_i2v
 from studio.video_graphs import WAN_LORAS_1022, ltx_single, render_graph, wan_i2v
 
@@ -72,12 +71,6 @@ def render(cfg: Config, variant: str, start: Path, prompt: str, seconds: int, se
     return render_graph(cfg, graph, {"START": start}, name=name, dest=dest)
 
 
-def _write(path: Path, text: str) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(text)
-
-
 def run(cfg: Config, *, alias: str, variant: str, tools, run_dir: Path, echo, count: int = 6, seeds=None,
         render=render) -> dict:
     if variant not in VARIANTS:
@@ -113,8 +106,8 @@ def run(cfg: Config, *, alias: str, variant: str, tools, run_dir: Path, echo, co
                         "drift": None if s.median is None or start_sim is None else s.median - start_sim,
                         "render_s": round(made.elapsed_s, 1)}
                 results["cells"].append(cell)
-                _write(run_dir / "results.json", json.dumps(results, indent=1) + "\n")
-                _write(run_dir / "review.html", review_page(results))
+                write_private(run_dir / "results.json", json.dumps(results, indent=1) + "\n")
+                write_private(run_dir / "review.html", review_page(results))
                 echo(line(cell))
     return results
 
@@ -153,4 +146,102 @@ def review_page(results: dict) -> str:
 <main>
 {cards}
 </main></body></html>
+"""
+
+
+def _mean(values: list[float]) -> float | None:
+    values = [v for v in values if v is not None]
+    return sum(values) / len(values) if values else None
+
+
+def fill_start_scores(cfg: Config, run: dict, run_dir: Path, profile: identity.Profile, tools) -> dict:
+    """Adds each cell's start-frame score and drift where a run was made before they were recorded."""
+    by_stem = {Path(source).stem: source for source in profile.sources}
+    scores = {}
+    for cell in run["cells"]:
+        if cell.get("start_sim") is not None or cell["start"] not in by_stem:
+            continue
+        if cell["start"] not in scores:
+            start = run_dir / "starts" / f"{cell['start']}.png"
+            scores[cell["start"]] = identity.score_image(profile.without(by_stem[cell["start"]]), tools, start).sim
+        cell["start_sim"] = scores[cell["start"]]
+        cell["drift"] = None if cell["median"] is None or cell["start_sim"] is None else cell["median"] - cell["start_sim"]
+    return run
+
+
+def compare(runs: list[dict], delta: float) -> dict:
+    """Each run against the first, cell by cell (same start photo, motion and seed), by the round rule: a mean gain
+    of at least `delta`, a win on all but at most one start photo, and no motion losing more than delta / 2."""
+    if len({run["profile"] for run in runs}) > 1:
+        raise ValueError("these runs were scored against different profiles; score them on one profile")
+    key = lambda c: (c["start"], c["motion"], c["seed"])  # noqa: E731
+    base = {key(c): c for c in runs[0]["cells"] if c["median"] is not None}
+    rows = []
+    for i, run in enumerate(runs):
+        cells = [c for c in run["cells"] if c["median"] is not None]
+        motions = {}
+        for motion in dict.fromkeys(c["motion"] for c in cells):
+            mc = [c for c in cells if c["motion"] == motion]
+            motions[motion] = {"median": _mean([c["median"] for c in mc]), "drift": _mean([c.get("drift") for c in mc]),
+                               "min": _mean([c["mid_min"] for c in mc]), "dips": sum(c["dips"] for c in mc),
+                               "coverage": _mean([c["coverage"] for c in mc]), "n": len(mc)}
+        row = {"variant": run["variant"], "motions": motions, "render_s": _mean([c["render_s"] for c in cells])}
+        if i == 0:
+            row["verdict"] = "baseline"
+            rows.append(row)
+            continue
+        pairs = [(c, base[key(c)]) for c in cells if key(c) in base]
+        gains = [c["median"] - b["median"] for c, b in pairs]
+        by_photo, by_motion = {}, {}
+        for (c, b), g in zip(pairs, gains):
+            by_photo.setdefault(c["start"], []).append(g)
+            by_motion.setdefault(c["motion"], []).append(g)
+        row.update(gain=_mean(gains), pairs=len(pairs), photos=len(by_photo),
+                   photo_wins=sum(1 for g in by_photo.values() if _mean(g) > 0),
+                   motion_gain={m: _mean(g) for m, g in by_motion.items()})
+        if any(g < -delta / 2 for g in row["motion_gain"].values()):
+            row["verdict"] = "a motion got worse"
+        elif row["gain"] is not None and row["gain"] >= delta and row["photo_wins"] >= row["photos"] - 1:
+            row["verdict"] = "passes screening"
+        else:
+            row["verdict"] = "no clear gain"
+        rows.append(row)
+    return {"delta": delta, "variants": rows}
+
+
+def compare_page(runs: list[tuple[str, dict]], report: dict) -> str:
+    """Every cell's clips side by side, run by run, with the numbers. Labelled, for analysis; it shows a real person,
+    so it stays on this machine."""
+    e = html.escape
+    cells = {}
+    for name, data in runs:
+        for c in data["cells"]:
+            cells.setdefault((c["start"], c["motion"], c["seed"]), {})[name] = c
+    rows = []
+    for (start, motion, seed), by_run in cells.items():
+        figures = "".join(
+            f'<figure><figcaption>{e(data["variant"])}</figcaption>'
+            f'<video src="{e(name)}/clips/{e(by_run[name]["clip"])}" controls loop muted playsinline '
+            f'preload="metadata"></video><p>{e(line(by_run[name]))}</p></figure>'
+            for name, data in runs if name in by_run)
+        rows.append(f'<section><h2>{e(start)} · {e(motion)} · seed {seed}</h2><div class="row">{figures}</div>'
+                    f'</section>')
+    verdicts = "".join(f"<li>{e(r['variant'])}: {e(r['verdict'])}</li>" for r in report["variants"])
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bench comparison</title>
+<style>
+  :root {{ color-scheme: dark; --bg: #0b0d12; --card: #161a22; --text: #e8eaf0; --muted: #9aa3b5; }}
+  body {{ margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }}
+  h1 {{ font-size: 20px; margin: 0 0 8px; }} h2 {{ font-size: 15px; margin: 24px 0 8px; }}
+  .row {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 360px), 1fr)); gap: 12px; }}
+  figure {{ margin: 0; background: var(--card); border-radius: 10px; padding: 10px; }}
+  figcaption {{ font-weight: 600; margin-bottom: 6px; }}
+  video {{ display: block; width: 100%; height: auto; border-radius: 6px; background: #000; }}
+  p, li {{ color: var(--muted); font: 12px/1.4 ui-monospace, monospace; }}
+</style></head>
+<body><h1>Bench comparison</h1><ul>{verdicts}</ul>
+{"".join(rows)}
+</body></html>
 """

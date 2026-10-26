@@ -3,11 +3,10 @@ its settings. Face recognition runs only on files whose whole lineage allows it:
 model sets whose license permits it (config models.*.biometric_outputs)."""
 
 import json
-import os
 from pathlib import Path
 
 from studio.config import Config
-from studio.fs import sha256_file
+from studio.fs import sha256_file, write_private
 
 SUFFIX = ".prov.json"
 CAPTURE_FOLDERS = ("photos", "video", "bench")
@@ -33,12 +32,7 @@ def write(cfg: Config, path: Path, *, kind: str, models: list[str], inputs: list
                          for name in models],
               "inputs": [{"path": str(Path(p).resolve()), "sha256": sha256_file(p)} for p in inputs],
               "params": params}
-    target = sidecar(path)
-    tmp = target.with_name(target.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(record, f, indent=1)
-    os.replace(tmp, target)
+    write_private(sidecar(path), json.dumps(record, indent=1))
     return record
 
 

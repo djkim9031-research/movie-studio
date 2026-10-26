@@ -93,3 +93,44 @@ def test_every_variant_names_its_model_sets_and_pinned_frames():
     for name, spec in bench.VARIANTS.items():
         assert spec["models"] and spec["pinned"][0] == 0, name
     assert bench.VARIANTS["ltx-bf16-1stage-loop"]["pinned"] == [0, -1]
+
+
+def results(variant, medians, start_sim=0.7, digest="d1"):
+    cells = []
+    for (start, motion), m in medians.items():
+        cells.append({"start": start, "motion": motion, "seed": 1001, "clip": f"{start}-{motion}.mp4", "median": m,
+                      "mid_min": m - 0.05, "dips": 0, "dip_seconds": 0.0, "coverage": 1.0, "yaw_range": 0.2,
+                      "percentile": 50.0, "start_sim": start_sim, "drift": m - start_sim, "render_s": 30.0})
+    return {"variant": variant, "alias": "me", "profile": digest, "seconds": 5, "cells": cells}
+
+
+def grid(value, bump=0.0, photos=6):
+    return {(f"p{i}", m): value + (bump if i < photos - 1 else -0.01)
+            for i in range(photos) for m in ("still", "turn", "float")}
+
+
+def test_compare_pairs_cells_and_applies_the_round_rule():
+    base = results("base", grid(0.60))
+    better = results("better", grid(0.60, bump=0.05))
+    same = results("same", grid(0.60, bump=0.002))
+    report = bench.compare([base, better, same], delta=0.02)
+    rows = {r["variant"]: r for r in report["variants"]}
+    assert rows["better"]["gain"] == pytest.approx(5 * 0.05 / 6, abs=1e-6)
+    assert rows["better"]["photo_wins"] == 5 and rows["better"]["verdict"] == "passes screening"
+    assert rows["same"]["verdict"] == "no clear gain"
+    assert rows["base"]["verdict"] == "baseline"
+
+
+def test_compare_refuses_runs_scored_against_different_profiles():
+    with pytest.raises(ValueError, match="profile"):
+        bench.compare([results("a", grid(0.6)), results("b", grid(0.6), digest="other")], delta=0.02)
+
+
+def test_a_motion_that_gets_worse_fails_the_round_even_with_an_overall_gain():
+    base = results("base", grid(0.60))
+    medians = grid(0.60, bump=0.08)
+    for i in range(6):
+        medians[(f"p{i}", "turn")] = 0.55
+    report = bench.compare([base, results("mixed", medians)], delta=0.02)
+    row = [r for r in report["variants"] if r["variant"] == "mixed"][0]
+    assert row["verdict"] == "a motion got worse"

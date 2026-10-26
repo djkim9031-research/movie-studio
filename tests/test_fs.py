@@ -112,3 +112,16 @@ def test_remove_in_refuses_a_linked_folder_on_the_way(tmp_path):
     with pytest.raises(OSError):
         remove_in(tmp_path, ["output", "studio", "a.png"])
     assert (elsewhere / "a.png").exists()
+
+
+def test_write_private_is_owner_only_and_replaces_a_planted_link_without_following_it(tmp_path):
+    from studio.fs import write_private
+    target = tmp_path / "page.html"
+    keep = tmp_path / "keep.txt"
+    keep.write_text("mine")
+    target.symlink_to(keep)
+    write_private(target, "new page")
+    assert target.read_text() == "new page" and not target.is_symlink() and keep.read_text() == "mine"
+    assert (target.stat().st_mode & 0o777) == 0o600
+    write_private(target, b"bytes too")
+    assert target.read_bytes() == b"bytes too"

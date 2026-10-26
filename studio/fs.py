@@ -35,6 +35,16 @@ def private_dir(path: Path) -> Path:
     return path
 
 
+def write_private(path: Path, data: str | bytes) -> None:
+    """Writes `path` with mode 0600 through a temporary file; a link already at `path` is replaced, not followed."""
+    path = Path(path)
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as out:
+        out.write(data.encode("utf-8") if isinstance(data, str) else data)
+    os.replace(tmp, path)
+
+
 def append_private(path: Path, text: str) -> None:
     """Appends to `path`, creating it with mode 0600."""
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)

@@ -4,7 +4,6 @@ clips. Callers check studio.provenance first: only files whose whole lineage all
 import hashlib
 import io
 import json
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -13,7 +12,7 @@ import numpy as np
 
 from studio import refs
 from studio.config import Config
-from studio.fs import private_dir
+from studio.fs import private_dir, write_private
 
 MIN_FACE_PX = 100
 # Nose offset from the eye midpoint, in eye distances; beyond this a face is too turned to score. Calibrated to
@@ -51,6 +50,10 @@ class Profile:
     @property
     def genuine_median(self) -> float:
         return float(np.median(self.genuine))
+
+    @property
+    def genuine_sd(self) -> float:
+        return float(np.std(self.genuine))
 
     def without(self, source: str) -> "Profile":
         """The profile without one photo, so that photo can be scored as unseen."""
@@ -106,22 +109,16 @@ def _profile_dir(cfg: Config, alias: str) -> Path:
     return cfg.data_root / "cast" / alias / "profile"
 
 
-def _write_private(path: Path, data: bytes) -> None:
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-
-
 def save_profile(cfg: Config, profile: Profile) -> Path:
     """Face embeddings are biometric data: owner-only files in the person's folder."""
     folder = private_dir(_profile_dir(cfg, profile.alias))
     arrays = io.BytesIO()
     np.savez(arrays, embeddings=profile.embeddings, genuine=profile.genuine, yaws=np.array(profile.yaws))
-    _write_private(folder / f"{profile.scorer}.npz", arrays.getvalue())
+    write_private(folder / f"{profile.scorer}.npz", arrays.getvalue())
     meta = {"alias": profile.alias, "scorer": profile.scorer, "digest": profile.digest, "sources": profile.sources,
             "genuine": {"pairs": len(profile.genuine), "p5": round(profile.genuine_p5, 4),
                         "median": round(profile.genuine_median, 4)}}
-    _write_private(folder / f"{profile.scorer}.json", (json.dumps(meta, indent=1) + "\n").encode())
+    write_private(folder / f"{profile.scorer}.json", (json.dumps(meta, indent=1) + "\n").encode())
     return folder / f"{profile.scorer}.npz"
 
 

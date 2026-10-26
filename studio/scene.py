@@ -4,7 +4,6 @@ the stills the user picks. Pictures and frames stay on this machine; Claude gets
 import contextlib
 import html
 import json
-import os
 import re
 import secrets
 import tempfile
@@ -12,7 +11,7 @@ from pathlib import Path
 
 from studio import refs, scene_prompts
 from studio.config import Config
-from studio.fs import private_dir
+from studio.fs import private_dir, write_private
 from studio.render import LANDSCAPE as CLIP_LANDSCAPE
 from studio.render import PORTRAIT as CLIP_PORTRAIT
 from studio.render import prepare_still, render_i2v
@@ -34,17 +33,9 @@ def scene_dir(cfg: Config, name: str) -> Path:
     return cfg.projects_dir / "scenes" / clean_name(name)
 
 
-def _write_private(path: Path, text: str) -> None:
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(text)
-    os.replace(tmp, path)
-
-
 def _save(folder: Path, data: dict) -> None:
-    _write_private(folder / "scene.json", json.dumps(data, indent=2) + "\n")
-    _write_private(folder / "review.html", review_page(data))
+    write_private(folder / "scene.json", json.dumps(data, indent=2) + "\n")
+    write_private(folder / "review.html", review_page(data))
 
 
 def load(cfg: Config, name: str) -> tuple[Path, dict]:
@@ -103,7 +94,7 @@ def make_stills(cfg: Config, *, name: str, prompt: str, pictures: list[Path], co
             dest = stills_dir / f"still{n}.png"
             still = render_still(cfg, report.used, prompts.still_request, seed=seed, size=size,
                                  name=f"{name}_still{n}", dest=dest)
-            _write_private(stills_dir / f"still{n}.graph.json", json.dumps(still.graph, indent=1) + "\n")
+            write_private(stills_dir / f"still{n}.graph.json", json.dumps(still.graph, indent=1) + "\n")
             data["caption"] = still.caption
             data["stills"].append({"n": n, "seed": seed, "file": f"stills/still{n}.png",
                                    "render_s": round(still.elapsed_s, 1)})

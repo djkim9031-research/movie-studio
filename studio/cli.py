@@ -1,4 +1,5 @@
 import contextlib
+import json
 import re
 import secrets
 import tempfile
@@ -14,7 +15,7 @@ from studio.claude.client import Claude, CredentialsError, Refused
 from studio.claude.ledger import BudgetExceeded, Ledger, summarize
 from studio.config import Config, load_config
 from studio.doctor import exit_code, run_doctor
-from studio.fs import private_dir
+from studio.fs import private_dir, write_private
 from studio.gpu import runtime
 from studio.gpu.comfy import RenderError, WorkflowError
 from studio.gpu.preflight import run_preflight
@@ -405,3 +406,41 @@ def bench_identity(person: str = typer.Option(..., help="Alias whose real photos
         typer.echo(f"{motion:<7} median {mean:.3f} min {low:.3f} dips {sum(c['dips'] for c in cells)} "
                    f"coverage {cover:.0%} ({len(cells)} cells)")
     typer.echo(f"PASS  {len(results['cells'])} clips; review: {run_dir / 'review.html'}")
+
+
+@bench_app.command("compare")
+def bench_compare(runs: list[str] = typer.Argument(..., help="Run names under bench/; the first is the baseline."),
+                  person: str = typer.Option(..., help="Alias the runs were scored against.")):
+    """Each run against the first, cell by cell, by the round rule; writes a side-by-side page."""
+    cfg = _state["cfg"]
+    _models_or_exit(cfg, ["face-detect", "face-id"])
+    try:
+        profile = identity.load_profile(cfg, person)
+    except FileNotFoundError as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    tools, loaded = face_tools(cfg), []
+    for name in runs:
+        run_dir = cfg.data_root / "bench" / scene.clean_name(name)
+        if not (run_dir / "results.json").is_file():
+            typer.echo(f"FAIL  no bench run {name} in {run_dir.parent}")
+            raise typer.Exit(1)
+        data = json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
+        loaded.append((run_dir.name, bench.fill_start_scores(cfg, data, run_dir, profile, tools)))
+    try:
+        report = bench.compare([data for _, data in loaded], delta=profile.genuine_sd / 4)
+    except ValueError as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    typer.echo(f"delta {report['delta']:.3f}: a quarter of the spread of {person}'s real photo pairs; per motion: "
+               f"median (drift from the start frame)")
+    for row in report["variants"]:
+        motions = "  ".join(f"{m} {v['median']:.3f} ({v['drift'] or 0:+.3f})" for m, v in row["motions"].items())
+        dips = sum(v["dips"] for v in row["motions"].values())
+        paired = (f"  gain {row['gain']:+.3f} wins {row['photo_wins']}/{row['photos']}"
+                  if row.get("gain") is not None else "")
+        typer.echo(f"{row['variant']:<22} {motions}  dips {dips}  {row['render_s'] or 0:.0f} s/clip{paired}  "
+                   f"{row['verdict']}")
+    page = cfg.data_root / "bench" / f"compare-{datetime.now():%Y%m%d-%H%M%S}.html"
+    write_private(page, bench.compare_page(loaded, report))
+    typer.echo(f"PASS  page: {page}")
