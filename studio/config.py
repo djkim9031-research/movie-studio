@@ -50,6 +50,16 @@ class FfmpegConfig(BaseModel):
     sha256: str
 
 
+class ComfyConfig(BaseModel):
+    image: str = "studio-comfyui:dev"
+    port: int = 8188
+    shm_gb: int = 16
+    # Build inputs, pinned before the first build: base image by digest, ComfyUI by commit.
+    base_image: str | None = None
+    commit: str | None = None
+    torch: str | None = None
+
+
 class ModelFile(BaseModel):
     path: str
     size: int
@@ -71,6 +81,7 @@ class Config(BaseModel):
     disk: DiskConfig = Field(default_factory=DiskConfig)
     ffmpeg: FfmpegConfig | None = None
     models: dict[str, ModelSet] = {}
+    comfyui: ComfyConfig = Field(default_factory=ComfyConfig)
 
     @field_validator("data_root", mode="before")
     @classmethod
@@ -100,6 +111,11 @@ class Config(BaseModel):
     @property
     def hf_env(self) -> Path:
         return self.secrets_dir / "hf.env"
+
+    @property
+    def comfy_io_dir(self) -> Path:
+        """Mounted at /io in the container: input, output, temp, user and home."""
+        return self.data_root / "comfy-io"
 
     @property
     def models_dir(self) -> Path:
