@@ -68,3 +68,11 @@ def test_a_reply_cut_off_at_the_token_limit_is_an_error():
     with pytest.raises(scene_prompts.PromptError, match="cut off"):
         scene_prompts.write(FakeClaude(REPLY, stop_reason="max_tokens"), film="f", user_prompt="x",
                             report=report(), orientation="landscape")
+
+
+def test_a_picture_of_other_people_is_offered_for_clothing_props_or_place():
+    r = report(people=6, extras=("palace1",))
+    r.used.append(Reference("extra", Path("e.png"), Path("e_square.png"), "hanbok.jpg", faces_blurred=True))
+    text = scene_prompts.roles(r)
+    assert 'Image 8: a picture of other people with their faces blurred, for clothing, props or place, file name ' \
+           '"hanbok"' in text

@@ -54,6 +54,7 @@ class Reference:
     face_px: int = 0
     sharpness: float = 0.0
     rank: int = 0  # 1 is the best face (sharpest, largest, most frontal); 0 for pictures without a person
+    faces_blurred: bool = False  # a picture of other people kept for clothing, props or place
 
 
 @dataclass
@@ -227,6 +228,20 @@ def face_frame(shape, face: Face, aspect: float = 16 / 9, face_frac: float = 0.3
     return round(x0), round(y0), round(x0 + width), round(y0 + height)
 
 
+def blur_faces(bgr: np.ndarray, faces: list[Face]) -> np.ndarray:
+    """A copy with each face, hair and chin included, blurred past recognition."""
+    out = bgr.copy()
+    H, W = out.shape[:2]
+    for f in faces:
+        x, y, w, h = f.box
+        x0, y0 = max(int(x - 0.25 * w), 0), max(int(y - 0.35 * h), 0)
+        x1, y1 = min(int(x + 1.25 * w), W), min(int(y + 1.25 * h), H)
+        if x1 > x0 and y1 > y0:
+            k = max(51, (max(y1 - y0, x1 - x0) // 2) * 2 + 1)
+            out[y0:y1, x0:x1] = cv2.GaussianBlur(out[y0:y1, x0:x1], (k, k), 0)
+    return out
+
+
 def square_crop(bgr: np.ndarray, face: Face, others: list[Face]) -> np.ndarray:
     x0, y0, x1, y1 = crop_window(bgr.shape, face, others)
     crop = bgr[y0:y1, x0:x1].copy()
@@ -327,13 +342,14 @@ def prepare(pictures: list[Path], out: Path, tools) -> Report:
             continue
         if faces[key] and key in subject_keys:
             report.skipped.append((name, f"not among the {MAX_PERSON} best faces"))
-        elif faces[key]:
-            report.skipped.append((name, "only other people"))
         elif len(report.used) >= MAX_REFERENCES:
             report.skipped.append((name, f"over the {MAX_REFERENCES}-reference limit"))
         else:
+            # Pictures of other people are kept for their clothing, props or place, with every face blurred.
             extras += 1
-            full, square = extra_versions(load(paths[key]))
+            picture = load(paths[key])
+            full, square = extra_versions(blur_faces(picture, faces[key]) if faces[key] else picture)
             report.used.append(Reference("extra", save_png(full, out / f"extra{extras}.png"),
-                                         save_png(square, out / f"extra{extras}_square.png"), name))
+                                         save_png(square, out / f"extra{extras}_square.png"), name,
+                                         faces_blurred=bool(faces[key])))
     return report

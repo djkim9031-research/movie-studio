@@ -36,7 +36,8 @@ Still request:
 - Open with "Create a photograph of the person shown in images 1-N (all N show the same person)", or "in image 1" \
 for one photo, then the scene. Name every other reference by number and say what to take from it ("Saturn from image \
 7").
-- Ask to keep the person's exact face, identity, skin tone and hair.
+- Ask to keep the person's exact face, identity, skin tone and hair. A picture of other people with blurred faces
+is there for what they wear or hold, or for the place: take only that from it, never a body or a face.
 - Frame the face large and clearly visible: a medium close-up or medium shot, the face toward the camera or at three \
 quarters, nothing over it. When the scene puts something on the head, keep the face unobstructed (a helmet gets a \
 clear visor with the sun visor raised and all hair inside).
@@ -107,8 +108,12 @@ def roles(report: Report) -> str:
         lines = [f"Images 1-{people}: {NUMBERS[people]} photos of the same person (square face crops)."]
     extras = [r for r in report.used if r.kind == "extra"]
     for number, ref in enumerate(extras, start=people + 1):
-        stem = ref.source.rsplit(".", 1)[0]
-        lines.append(f'Image {number}: a picture without people, file name "{_plain(stem)}".')
+        stem = _plain(ref.source.rsplit(".", 1)[0])
+        if ref.faces_blurred:
+            lines.append(f'Image {number}: a picture of other people with their faces blurred, for clothing, props or '
+                         f'place, file name "{stem}".')
+        else:
+            lines.append(f'Image {number}: a picture without people, file name "{stem}".')
     return "\n".join(lines)
 
 

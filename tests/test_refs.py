@@ -106,10 +106,11 @@ def test_prepare_writes_person_crops_and_extras_and_reports_what_it_skipped(tmp_
                        (1500, 1600): [face(600, 400, 500, OTHER)]})
     out = tmp_path / "refs"
     report = refs.prepare(pics, out, tools)
-    assert [(r.kind, r.file.name, r.source) for r in report.used] == [
-        ("person", "person1.png", "p1.jpg"), ("person", "person2.png", "p2.jpg"), ("extra", "extra1.png", "saturn.png")]
-    assert report.used[-1].square.name == "extra1_square.png"
-    assert report.skipped == [("other.jpg", "only other people")]
+    assert [(r.kind, r.file.name, r.source, r.faces_blurred) for r in report.used] == [
+        ("person", "person1.png", "p1.jpg", False), ("person", "person2.png", "p2.jpg", False),
+        ("extra", "extra1.png", "other.jpg", True), ("extra", "extra2.png", "saturn.png", False)]
+    assert report.used[-1].square.name == "extra2_square.png"
+    assert report.skipped == []
     with Image.open(out / "person1.png") as crop:
         assert crop.size == (1024, 1024) and not crop.getexif() and not crop.info.get("exif")
     assert (out.stat().st_mode & 0o777) == 0o700
@@ -163,14 +164,16 @@ def test_gather_refuses_a_missing_path_and_too_many_pictures(tmp_path):
 
 
 def test_prepare_reads_only_the_pictures_it_uses_a_second_time(tmp_path, monkeypatch):
-    pics = [write(tmp_path / "p1.jpg", (2000, 1500)), write(tmp_path / "other.jpg", (1600, 1500)),
+    pics = [write(tmp_path / "p1.jpg", (2000, 1500)), write(tmp_path / "p1copy.jpg", (1900, 1500)),
             write(tmp_path / "saturn.png", (1400, 700), exif=False)]
-    tools = FakeTools({(1500, 2000): [face(800, 400, 500, ME)], (1500, 1600): [face(600, 400, 500, OTHER)]})
+    tools = FakeTools({(1500, 2000): [face(800, 400, 500, ME, sharpness=300)],
+                       (1500, 1900): [face(800, 400, 500, ME, sharpness=200)]})
     loads = []
     real = refs.load
     monkeypatch.setattr(refs, "load", lambda path: loads.append(path.name) or real(path))
-    refs.prepare(pics, tmp_path / "refs", tools)
-    assert sorted(loads) == ["other.jpg", "p1.jpg", "p1.jpg", "saturn.png", "saturn.png"]
+    report = refs.prepare(pics, tmp_path / "refs", tools)
+    assert report.skipped == [("p1copy.jpg", "not among the 6 best faces")]
+    assert sorted(loads) == ["p1.jpg", "p1.jpg", "p1copy.jpg", "saturn.png", "saturn.png"]
 
 
 def test_face_frame_is_16_9_around_the_face_with_the_eyes_high_in_frame():
@@ -222,3 +225,16 @@ def test_prepare_ranks_person_crops_best_first(tmp_path):
     report = refs.prepare(pics, tmp_path / "refs", tools)
     assert [(r.source, r.rank) for r in report.used] == [("p1.jpg", 2), ("p2.jpg", 1)]
     assert [r.source for r in report.best(1)] == ["p2.jpg"]
+
+
+def test_a_picture_of_only_other_people_becomes_a_reference_with_their_faces_blurred(tmp_path):
+    pics = [write(tmp_path / "p1.jpg", (2000, 1500)), write(tmp_path / "p2.jpg", (1800, 1500)),
+            write(tmp_path / "hanbok.jpg", (1600, 1500))]
+    tools = FakeTools({(1500, 2000): [face(800, 400, 500, ME)], (1500, 1800): [face(700, 400, 500, ME_TOO)],
+                       (1500, 1600): [face(600, 300, 400, OTHER)]})
+    report = refs.prepare(pics, tmp_path / "refs", tools)
+    outfit = [r for r in report.used if r.source == "hanbok.jpg"]
+    assert len(outfit) == 1 and outfit[0].kind == "extra" and outfit[0].faces_blurred
+    assert report.skipped == []
+    with Image.open(outfit[0].file) as image:
+        assert image.size == (1600, 1500)
