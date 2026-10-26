@@ -1,9 +1,14 @@
+import re
 import sys
+from pathlib import Path
 
-from studio.config import Config
+from studio.config import Config, load_config
 from studio.gpu.runtime import (egress_problems, network_create_args, network_problems, parse_top_pids,
                                 run_args)
 from studio.gpu.vram import VramSampler
+
+
+DOCKER_DIR = Path(__file__).resolve().parent.parent / "docker" / "comfyui"
 
 
 def make_config(tmp_path):
@@ -70,3 +75,17 @@ def test_vram_sampler_exit_never_raises_even_if_the_sampler_ignores_sigterm():
     with sampler:
         sampler.wait_for_samples(1, timeout=5)
     assert sampler.process.poll() is not None
+
+
+def test_every_package_in_the_image_comes_from_the_hashed_lock():
+    instructions = re.sub(r"\\\n", " ", (DOCKER_DIR / "Dockerfile").read_text()).splitlines()
+    installs = [line for line in instructions if "pip install" in line]
+    assert installs and all("--require-hashes" in line and "--no-deps" in line and "requirements.lock" in line
+                            for line in installs)
+
+
+def test_the_lock_pins_every_package_with_hashes_and_the_configured_torch():
+    pins = re.split(r"\n(?=\S)", (DOCKER_DIR / "requirements.lock").read_text().strip())
+    pins = [pin for pin in pins if not pin.startswith("#")]
+    assert len(pins) > 50 and all(re.match(r"^[A-Za-z0-9._-]+==\S+ ", pin) and "--hash=sha256:" in pin for pin in pins)
+    assert any(pin.startswith(f"torch=={load_config().comfyui.torch}+cu130 ") for pin in pins)

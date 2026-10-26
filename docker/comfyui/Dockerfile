@@ -16,18 +16,20 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates gcc git libc6-dev libgl1 libglib2.0-0 \
  && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.19 /uv /usr/local/bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.19@sha256:b46b03ddfcfbf8f547af7e9eaefdf8a39c8cebcba7c98858d3162bd28cf536f6 /uv /usr/local/bin/uv
 RUN uv python install 3.12 && uv venv /opt/venv --python 3.12
 ENV PATH=/opt/venv/bin:$PATH \
     VIRTUAL_ENV=/opt/venv
 
-# torch first and pinned: ComfyUI's requirements name torch without a version.
-RUN uv pip install "torch==${TORCH_VERSION}" torchvision torchaudio \
-      --index-url https://download.pytorch.org/whl/cu130
+# Every package comes from the hashed lock: frozen from the image that passed the first renders.
+COPY requirements.lock check_env.py /opt/studio/
+RUN uv pip install --require-hashes --no-deps -r /opt/studio/requirements.lock \
+      --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cu130 \
+      --index-strategy unsafe-best-match
 
 RUN git clone --filter=blob:none https://github.com/Comfy-Org/ComfyUI.git /opt/ComfyUI \
  && git -C /opt/ComfyUI checkout --detach "${COMFY_COMMIT}" \
- && uv pip install -r /opt/ComfyUI/requirements.txt
+ && python /opt/studio/check_env.py "${TORCH_VERSION}+cu130"
 
 COPY extra_model_paths.yaml /opt/ComfyUI/extra_model_paths.yaml
 WORKDIR /opt/ComfyUI
