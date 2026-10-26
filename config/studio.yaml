@@ -1,0 +1,22 @@
+data_root: ~/studio-data
+
+claude:
+  routes:
+    doctor: {model: claude-opus-5-5, effort: low}
+  # USD per million tokens, list prices of 2026-10. Cache writes cost input x 1.25 (5 min) or x 2 (1 h).
+  # claude-opus-5 and claude-opus-4-8 are the server-side fallback targets for claude-opus-5-5.
+  prices:
+    claude-opus-5-5: {input: 4.00, output: 20.00, cache_read: 0.20}
+    claude-opus-5: {input: 5.00, output: 25.00, cache_read: 0.50}
+    claude-opus-4-8: {input: 5.00, output: 25.00, cache_read: 0.50}
+  film_cap_usd: 20
+  month_cap_usd: 40
+
+gpu:
+  agent_service: agent-vllm
+  min_free_gib: 60
+
+disk:
+  home_min_free_gb: 300
+  docker_root: /var/lib/docker
+  docker_min_free_gb: 50
