@@ -14,3 +14,7 @@ public-domain photo of a misty pond, no people.
 
 GPU memory used: 1.4 GiB with the display alone, 1.7 GiB with ComfyUI idle, 39.2 GiB with the LTX-2.5 weights
 resident, 1.4 GiB again after `studio gpu down`.
+
+After the switch to the hashed lock (the same 104 packages): cold 40.6 s, peak 42.8 GiB; warm 27.2 s, peak
+42.7 GiB. The warm run had a new prompt, picture name and seed; ComfyUI reused 22 of the 45 nodes, the model
+loaders among them, so warm times leave out weight loading only.

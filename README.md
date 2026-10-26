@@ -19,8 +19,11 @@ and secrets.
 
 1. `uv sync`
 2. `uv run studio fetch-ffmpeg`
-3. Put `ANTHROPIC_API_KEY=...` in `~/studio-data/secrets/anthropic.env`, mode 0600.
+3. Put `ANTHROPIC_API_KEY=...` in `~/studio-data/secrets/anthropic.env` and `HF_TOKEN=...` in
+   `~/studio-data/secrets/hf.env`, both mode 0600.
 4. `uv run studio doctor --claude`
+5. Accept the LTX-2.5 license on huggingface.co, then `uv run studio models fetch ltx25-int8`
+6. `uv run studio gpu build`
 
 ## Commands
 
@@ -33,6 +36,13 @@ and secrets.
 - `studio smoke-mux`: a 10 s test pattern with a tone at -16 LUFS
 - `studio cost [--month YYYY-MM]`: Claude API spend by film and route
 - `studio fetch-ffmpeg`: install the pinned FFmpeg build
+
+## Web UI
+
+`uv run studio gpu up`, then open http://192.168.131.2:8188 on this machine. From another machine:
+`ssh -L 8188:192.168.131.2:8188 <this machine>`, then http://localhost:8188. Uploads land in
+`~/studio-data/comfy-io/input`, results in `~/studio-data/comfy-io/output`. `uv run studio gpu down` stops ComfyUI
+and frees the GPU.
 
 ## Rules
 

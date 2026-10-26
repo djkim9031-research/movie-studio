@@ -19,3 +19,23 @@
 - FFmpeg is the BtbN n8.1 static build. n9.0 and newer builds need driver 610+ for NVENC; this machine has 580.
   The sha256 in config/studio.yaml was copied from that release's checksums.sha256 on 2026-10-26; the install
   trusts only the pinned value.
+
+## 2026-10-26: picture runtime
+
+- LTX-2.5 distilled int8 only; NVFP4 is compared in the next increment.
+- ComfyUI v0.42.1 in a CUDA 13.0 cuDNN runtime image. A devel image comes with the speed work, when kernels are
+  compiled.
+- Packages come from `docker/comfyui/requirements.lock` with their hashes, frozen from the image that passed the
+  first renders. A package change means a new lock and the renders again.
+- `--offline`: ComfyUI's paid partner nodes are off and the web page cannot reach the internet.
+- The container runs on an internal Docker network with no route out and no DNS. This machine reaches it at
+  http://192.168.131.2:8188. Two limits remain: the container can reach services listening on this machine's side
+  of that network (ssh, NFS, NoMachine; none relays traffic without a login), and ComfyUI has no login, so any
+  account on this machine can open it while it runs.
+- Models are mounted read-only. ComfyUI's input, output, temp and user folders stay writable so the web UI can take
+  uploads; studio copies files in and out of them without following links.
+- The client polls `/history/{prompt_id}` instead of a websocket: no missed events, but no live progress.
+- The stock template's prompt enhancer is removed from the exported workflow in code; Claude writes the prompts.
+  Its model, Gemma 4 E2B, is downloaded only so the template runs unchanged in the web UI.
+- ComfyUI reuses a node's result while its inputs are unchanged. A clip taken whole from an earlier run counts as a
+  failure; a repeat of the same picture, prompt and seed needs a new seed or a restart.
