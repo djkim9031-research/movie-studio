@@ -14,11 +14,23 @@ def hf_hub_download(**kwargs) -> str:
     return download(**kwargs)
 
 
+def present(cfg: Config, name: str) -> list[str]:
+    """Like verify, by name and size only: a quick check before a run; verify proves the content."""
+    problems = []
+    for f in cfg.models[name].files:
+        path = cfg.model_root(name) / f.path
+        if not path.exists():
+            problems.append(f"{f.path}: missing")
+        elif path.stat().st_size != f.size:
+            problems.append(f"{f.path}: size {path.stat().st_size}, expected {f.size}")
+    return problems
+
+
 def verify(cfg: Config, name: str) -> list[str]:
     """One line per file that is missing, the wrong size, or has the wrong sha256; empty when all match."""
     problems = []
     for f in cfg.models[name].files:
-        path = cfg.models_dir / f.path
+        path = cfg.model_root(name) / f.path
         if not path.exists():
             problems.append(f"{f.path}: missing")
             continue
@@ -35,8 +47,8 @@ def verify(cfg: Config, name: str) -> list[str]:
 def fetch(cfg: Config, name: str) -> list[str]:
     pinned = cfg.models[name]
     token = read_secret(cfg.hf_env, "HF_TOKEN")
-    private_dir(cfg.models_dir)
+    root = private_dir(cfg.model_root(name))
     for f in pinned.files:
-        hf_hub_download(repo_id=pinned.repo, filename=f.path, revision=pinned.revision, local_dir=cfg.models_dir,
+        hf_hub_download(repo_id=pinned.repo, filename=f.path, revision=pinned.revision, local_dir=root,
                         token=token, endpoint=HF_URL)
     return verify(cfg, name)

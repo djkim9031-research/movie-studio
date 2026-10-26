@@ -61,10 +61,15 @@ def copy_into(src: Path, folder: Path, name: str) -> Path:
     return Path(folder) / name
 
 
+def safe_parts(parts: list[str]) -> bool:
+    """Plain names only: no empty part, no "." or "..", no slash."""
+    return bool(parts) and all(part and part not in (".", "..") and "/" not in part for part in parts)
+
+
 def copy_out(base: Path, parts: list[str], dest: Path) -> Path:
     """Copies base/parts[0]/.../parts[-1] to `dest`. `base` is ours; the parts may come from the container, so each
     is opened without following links and the last must be a regular file."""
-    if any(not part or part in (".", "..") or "/" in part for part in parts):
+    if not safe_parts(parts):
         raise ValueError(f"unsafe path: {parts}")
     fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
     try:
@@ -81,3 +86,22 @@ def copy_out(base: Path, parts: list[str], dest: Path) -> Path:
         with open(dest, "wb") as out:
             shutil.copyfileobj(data, out)
     return Path(dest)
+
+
+def remove_in(base: Path, parts: list[str]) -> bool:
+    """Deletes base/parts[0]/.../parts[-1] without following links on the way; a link at the end is removed itself.
+    False when the entry is already gone."""
+    if not safe_parts(parts):
+        raise ValueError(f"unsafe path: {parts}")
+    fd = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, _DIR_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        os.unlink(parts[-1], dir_fd=fd)
+        return True
+    except FileNotFoundError:
+        return False
+    finally:
+        os.close(fd)

@@ -1,13 +1,17 @@
+import contextlib
 import re
 import secrets
 import tempfile
 from datetime import datetime
 from pathlib import Path
 
+import anthropic
 import typer
+from pydantic import ValidationError
 
-from studio import models
-from studio.claude.ledger import Ledger, summarize
+from studio import models, refs, scene
+from studio.claude.client import Claude, CredentialsError, Refused
+from studio.claude.ledger import BudgetExceeded, Ledger, summarize
 from studio.config import Config, load_config
 from studio.doctor import exit_code, run_doctor
 from studio.fs import private_dir
@@ -17,6 +21,7 @@ from studio.gpu.preflight import run_preflight
 from studio.media import ffmpeg
 from studio.media.smoke import TARGET_LUFS, smoke_mux
 from studio.render import LANDSCAPE, image_size, prepare_still, render_i2v, target_size
+from studio.scene_prompts import PromptError
 
 # Tracebacks must never print locals: the Claude client holds the API key.
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False,
@@ -25,6 +30,9 @@ models_app = typer.Typer(no_args_is_help=True, help="Pinned model weights.")
 app.add_typer(models_app, name="models")
 gpu_app = typer.Typer(no_args_is_help=True, help="The ComfyUI container on this GPU.")
 app.add_typer(gpu_app, name="gpu")
+scene_app = typer.Typer(no_args_is_help=True, help="A scene from a prompt and pictures: stills, then clips of the "
+                                                   "stills you pick.")
+app.add_typer(scene_app, name="scene")
 RENDER_TEST_PROMPT = ("A slow push-in toward a misty pond at morning. Fog drifts low across the water, willow "
                       "leaves and tall meadow grass sway in a light breeze, soft sunlight. Quiet outdoor ambience: "
                       "light wind and distant birds.")
@@ -212,3 +220,79 @@ def make_video(picture: Path = typer.Argument(..., help="Start frame: any photo 
     finally:
         if started_here and not keep_up:
             runtime.down(cfg)
+
+
+SCENE_ERRORS = (scene.SceneError, PromptError, RenderError, WorkflowError, TimeoutError, Refused, CredentialsError,
+                BudgetExceeded, anthropic.APIError, ValidationError)
+
+
+def face_tools(cfg: Config) -> refs.FaceTools:
+    detect, identify = cfg.models["face-detect"], cfg.models["face-id"]
+    return refs.FaceTools(cfg.model_root("face-detect") / detect.files[0].path,
+                          cfg.model_root("face-id") / identify.files[0].path)
+
+
+def _models_or_exit(cfg: Config, names: list[str]) -> None:
+    for name in names:
+        problems = models.present(cfg, name) if name in cfg.models else [f"{name} is not in the config"]
+        if problems:
+            typer.echo(f"FAIL  model set {name}: {problems[0]}; run: uv run studio models fetch {name}")
+            raise typer.Exit(1)
+
+
+@contextlib.contextmanager
+def _comfy_session(cfg: Config, keep_up: bool):
+    """ComfyUI for the length of a command: started here if it was down, stopped again unless --keep-up."""
+    started_here = not runtime.is_running()
+    if started_here:
+        runtime.up(cfg)
+    try:
+        _gpu_ours_or_exit(cfg)
+        yield
+    finally:
+        if started_here and not keep_up:
+            runtime.down(cfg)
+
+
+@scene_app.command("stills")
+def scene_stills(pictures: list[Path] = typer.Argument(..., help="Photos of the person, and pictures of places or "
+                                                                 "things to use."),
+                 prompt: str = typer.Option(..., help="The scene in your words: place, look, expression, motion."),
+                 name: str = typer.Option(..., help="Scene name; its folder is projects/scenes/NAME."),
+                 count: int = typer.Option(4, min=1, max=12, help="How many stills to make."),
+                 portrait: bool = typer.Option(False, "--portrait", help="9:16 instead of 16:9."),
+                 keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
+    """References from your pictures, prompts from Claude (text only), then FLUX 3 Klein stills."""
+    cfg = _state["cfg"]
+    _models_or_exit(cfg, ["face-detect", "face-id", "flux3-klein"])
+    try:
+        made = scene.make_stills(cfg, name=name, prompt=prompt, pictures=pictures, count=count, portrait=portrait,
+                                 claude=Claude(cfg), tools=face_tools(cfg), echo=typer.echo,
+                                 gpu=lambda: _comfy_session(cfg, keep_up))
+    except SCENE_ERRORS as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    folder = scene.scene_dir(cfg, made["name"])
+    typer.echo(f"PASS  {len(made['stills'])} stills; review: {folder / 'review.html'}")
+    typer.echo(f"      next: uv run studio scene clips --name {made['name']} STILL... (still numbers from the review)")
+
+
+@scene_app.command("clips")
+def scene_clips(numbers: list[int] = typer.Argument(..., help="Still numbers to animate, as on the review page."),
+                name: str = typer.Option(..., help="Scene name."),
+                seconds: int = typer.Option(5, min=1, max=10, help="Clip length in whole seconds."),
+                seed: int = typer.Option(None, help="Noise seed for every clip; random when omitted."),
+                keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
+    """LTX-2.5 clips with sound of the chosen stills, with the scene's motion prompt."""
+    cfg = _state["cfg"]
+    _models_or_exit(cfg, ["ltx25-int8"])
+    try:
+        scene.load(cfg, name)
+        made = scene.make_clips(cfg, name=name, numbers=numbers, seconds=seconds, seed=seed, echo=typer.echo,
+                                gpu=lambda: _comfy_session(cfg, keep_up))
+    except SCENE_ERRORS as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    count = len(numbers)
+    typer.echo(f"PASS  {count} clip{'s' if count > 1 else ''}; review: "
+               f"{scene.scene_dir(cfg, made['name']) / 'review.html'}")

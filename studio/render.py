@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from studio.config import Config
-from studio.fs import copy_into, copy_out, private_dir
+from studio.fs import copy_into, copy_out, private_dir, remove_in, safe_parts
 from studio.gpu import runtime
 from studio.gpu.comfy import RenderError, cached_nodes, output_files
 from studio.gpu.vram import VramSampler
@@ -50,10 +50,11 @@ class Render:
 
 
 def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, size: tuple[int, int],
-               name: str, dest: Path) -> Render:
+               name: str, dest: Path, cleanup: bool = False) -> Render:
     """One render with `still` (already `size`) as the first frame, saved to `dest`.
 
-    ComfyUI's folders are writable from the container, so files go in and come out without following links."""
+    ComfyUI's folders are writable from the container, so files go in and come out without following links. With
+    `cleanup`, the start frame and the clip are removed from those folders afterwards."""
     input_name = f"{name}.png"
     try:
         copy_into(still, private_dir(cfg.comfy_io_dir / "input"), input_name)
@@ -64,8 +65,12 @@ def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, s
                     {"prompt": prompt, "image": input_name, "seconds": seconds, "width": size[0],
                      "height": size[1], "seed": seed, "prefix": f"studio/{name}"})
     started = time.monotonic()
-    with VramSampler() as vram:
-        entry = runtime.client(cfg).run(workflow, timeout_s=1800)
+    try:
+        with VramSampler() as vram:
+            entry = runtime.client(cfg).run(workflow, timeout_s=1800)
+    finally:
+        if cleanup:
+            remove_in(cfg.comfy_io_dir, ["input", input_name])
     elapsed = time.monotonic() - started
     clips = [(node_id, item) for node_id, out in entry.get("outputs", {}).items()
              for items in out.values() if isinstance(items, list)
@@ -78,9 +83,13 @@ def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, s
         raise RenderError("ComfyUI reused the clip of an identical earlier run, so nothing was rendered; "
                           "change --seed or restart ComfyUI to render it again")
     subfolder, filename = item.get("subfolder", ""), item["filename"]
+    parts = ["output", *Path(subfolder).parts, filename]
     try:
-        copy_out(cfg.comfy_io_dir, ["output", *Path(subfolder).parts, filename], dest)
+        copy_out(cfg.comfy_io_dir, parts, dest)
     except (ValueError, OSError) as error:
         raise RenderError(f"unsafe output path from ComfyUI: {subfolder}/{filename} ({error})") from None
+    finally:
+        if cleanup and safe_parts(parts):
+            remove_in(cfg.comfy_io_dir, parts)
     return Render(clip=Path(dest), elapsed_s=elapsed,
                   peak_gib=vram.peak_mib / 1024 if vram.peak_mib is not None else None, reused_nodes=len(reused))

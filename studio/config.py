@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Literal
 
@@ -75,11 +76,19 @@ class ModelFile(BaseModel):
 
 
 class ModelSet(BaseModel):
-    """Files of one Hugging Face repo at a pinned commit; paths follow ComfyUI's model folders."""
+    """Files of one Hugging Face repo at a pinned commit, under models/<root>; root comfy is ComfyUI's model folders."""
 
     repo: str
     revision: str
+    root: str = "comfy"
     files: list[ModelFile]
+
+    @field_validator("root")
+    @classmethod
+    def _plain_name(cls, value):
+        if not re.fullmatch(r"[a-z0-9_-]+", value):
+            raise ValueError(f"model root must be a plain folder name: {value!r}")
+        return value
 
 
 class Config(BaseModel):
@@ -129,6 +138,9 @@ class Config(BaseModel):
     def models_dir(self) -> Path:
         """ComfyUI's model root: diffusion_models/, text_encoders/, vae/ and so on."""
         return self.data_root / "models" / "comfy"
+
+    def model_root(self, name: str) -> Path:
+        return self.data_root / "models" / self.models[name].root
 
 
 def load_config(path: Path | None = None) -> Config:

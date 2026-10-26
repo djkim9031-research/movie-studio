@@ -169,3 +169,35 @@ def test_make_video_says_how_many_nodes_were_reused(tmp_path, monkeypatch):
     result = run_make_video_with_entry(tmp_path, monkeypatch, entry_with_cache(["398:364", "398:387"]))
     assert result.exit_code == 0, result.output
     assert "2 nodes reused from an earlier run" in result.output
+
+
+@needs_ffmpeg
+def test_render_i2v_with_cleanup_leaves_nothing_in_comfy_io(tmp_path, monkeypatch):
+    from studio.config import Config
+    from studio.render import render_i2v
+    cfg = Config.model_validate({"data_root": str(tmp_path)})
+    out_dir = tmp_path / "comfy-io" / "output" / "studio"
+    out_dir.mkdir(parents=True)
+    smoke_mux(CFG, out_dir / "clip_00001_.mp4")
+    still = make_picture(tmp_path / "still.png", 1280, 704)
+
+    class DoneClient:
+        def run(self, workflow, timeout_s):
+            return {"outputs": {"75": {"images": [{"filename": "clip_00001_.mp4", "subfolder": "studio",
+                                                   "type": "output"}]}}}
+
+    class Peak:
+        peak_mib = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    monkeypatch.setattr("studio.gpu.runtime.client", lambda cfg: DoneClient())
+    monkeypatch.setattr("studio.render.VramSampler", Peak)
+    dest = tmp_path / "clip.mp4"
+    render_i2v(cfg, still, "x", 5, 7, LANDSCAPE, "clip", dest, cleanup=True)
+    assert dest.stat().st_size > 0
+    assert list((tmp_path / "comfy-io" / "input").iterdir()) == [] and list(out_dir.iterdir()) == []

@@ -1,4 +1,6 @@
-from studio.fs import private_dir
+import pytest
+
+from studio.fs import private_dir, remove_in
 
 
 def test_private_dir_creates_every_missing_level_owner_only(tmp_path):
@@ -78,3 +80,35 @@ def test_copy_out_refuses_a_linked_file_or_folder(tmp_path):
     with pytest.raises(OSError):
         copy_out(base, ["output", "linked-folder", "family.mp4"], tmp_path / "saved.mp4")
     assert not (tmp_path / "saved.mp4").exists()
+
+
+def test_remove_in_deletes_a_regular_file(tmp_path):
+    (tmp_path / "output" / "studio").mkdir(parents=True)
+    (tmp_path / "output" / "studio" / "a.png").write_bytes(b"x")
+    assert remove_in(tmp_path, ["output", "studio", "a.png"]) is True
+    assert not (tmp_path / "output" / "studio" / "a.png").exists()
+
+
+def test_remove_in_reports_a_file_that_is_already_gone(tmp_path):
+    (tmp_path / "output").mkdir()
+    assert remove_in(tmp_path, ["output", "gone.png"]) is False
+
+
+def test_remove_in_deletes_a_planted_link_and_not_its_target(tmp_path):
+    keep = tmp_path / "keep.txt"
+    keep.write_text("mine")
+    (tmp_path / "input").mkdir()
+    (tmp_path / "input" / "ref.png").symlink_to(keep)
+    assert remove_in(tmp_path, ["input", "ref.png"]) is True
+    assert keep.read_text() == "mine" and not (tmp_path / "input" / "ref.png").is_symlink()
+
+
+def test_remove_in_refuses_a_linked_folder_on_the_way(tmp_path):
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (elsewhere / "a.png").write_bytes(b"x")
+    (tmp_path / "output").mkdir()
+    (tmp_path / "output" / "studio").symlink_to(elsewhere)
+    with pytest.raises(OSError):
+        remove_in(tmp_path, ["output", "studio", "a.png"])
+    assert (elsewhere / "a.png").exists()

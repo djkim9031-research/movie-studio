@@ -75,3 +75,29 @@ def test_read_secret_refuses_a_file_others_can_read(tmp_path):
     os.chmod(path, 0o644)
     with pytest.raises(SecretError, match="0600"):
         read_secret(path, "HF_TOKEN")
+
+
+def test_a_set_with_its_own_root_lives_outside_comfyuis_model_folders(tmp_path):
+    root = tmp_path / "models" / "faces"
+    cfg = Config.model_validate({
+        "data_root": str(tmp_path),
+        "models": {"faces": {"repo": "org/faces", "revision": "abc123", "root": "faces",
+                             "files": [file_entry(root, "detector.onnx", b"onnx")]}}})
+    assert cfg.model_root("faces") == root
+    assert models.verify(cfg, "faces") == []
+
+
+def test_a_set_root_must_be_a_plain_folder_name(tmp_path):
+    with pytest.raises(ValueError):
+        Config.model_validate({"data_root": str(tmp_path),
+                               "models": {"x": {"repo": "o/x", "revision": "r", "root": "../elsewhere", "files": []}}})
+
+
+def test_present_checks_names_and_sizes_without_reading_the_files(tmp_path, monkeypatch):
+    root = tmp_path / "models" / "comfy"
+    good = file_entry(root, "vae/a.safetensors", b"aaaa")
+    short = {**file_entry(root, "vae/b.safetensors", b"bb"), "size": 3}
+    missing = {"path": "vae/d.safetensors", "size": 1, "sha256": "0" * 64}
+    monkeypatch.setattr(models, "sha256_file", lambda path: pytest.fail("present must not hash"))
+    problems = models.present(make_config(tmp_path, [good, short, missing]), "demo")
+    assert problems == ["vae/b.safetensors: size 2, expected 3", "vae/d.safetensors: missing"]
