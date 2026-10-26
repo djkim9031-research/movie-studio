@@ -8,6 +8,8 @@ import anthropic
 from studio.claude.ledger import Ledger, hops_from_message
 from studio.config import Config
 
+API_URL = "https://api.anthropic.com"
+
 
 class CredentialsError(RuntimeError):
     pass
@@ -33,11 +35,12 @@ def read_api_key(env_file: Path) -> str:
 
 class Claude:
     def __init__(self, cfg: Config, *, http_client=None, ledger: Ledger | None = None):
-        # The SDK would also send a bearer token from the environment; keep one credential source.
-        if os.environ.get("ANTHROPIC_AUTH_TOKEN"):
-            raise CredentialsError("unset ANTHROPIC_AUTH_TOKEN; studio reads only " + str(cfg.anthropic_env))
+        # The SDK adds this variable's headers to every request whatever the client is given.
+        if os.environ.get("ANTHROPIC_CUSTOM_HEADERS"):
+            raise CredentialsError("unset ANTHROPIC_CUSTOM_HEADERS; studio sends no extra headers")
         kwargs = {"http_client": http_client} if http_client is not None else {}
-        self.client = anthropic.Anthropic(api_key=read_api_key(cfg.anthropic_env), **kwargs)
+        # An explicit base_url keeps ANTHROPIC_BASE_URL from sending the key and prompts to another host.
+        self.client = anthropic.Anthropic(api_key=read_api_key(cfg.anthropic_env), base_url=API_URL, **kwargs)
         self.cfg = cfg
         self.ledger = ledger or Ledger(cfg.ledger_dir, cfg.claude)
 
