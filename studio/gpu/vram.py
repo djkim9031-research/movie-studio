@@ -1,16 +1,15 @@
-"""GPU memory sampled every 100 ms by nvidia-smi while a render runs; the first sample is the baseline."""
+"""GPU memory sampled every 100 ms by nvidia-smi while a render runs."""
 
 import subprocess
 import threading
 import time
 
-MIB_PER_GIB = 1024
-
 
 class VramSampler:
-    def __init__(self, command: list[str] | None = None, interval_ms: int = 100):
+    def __init__(self, command: list[str] | None = None, interval_ms: int = 100, stop_timeout_s: float = 5.0):
         self.command = command or ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits",
                                    "-lms", str(interval_ms)]
+        self.stop_timeout_s = stop_timeout_s
         self.samples: list[int] = []
 
     def __enter__(self):
@@ -30,19 +29,17 @@ class VramSampler:
         while len(self.samples) < count and time.monotonic() < deadline:
             time.sleep(0.01)
 
-    def __exit__(self, *exc) -> None:
+    def __exit__(self, *exc) -> bool:
+        # Never raises: an error here must not replace the render's own error.
         self.process.terminate()
-        self.process.wait(timeout=5)
-        self.thread.join(timeout=5)
+        try:
+            self.process.wait(timeout=self.stop_timeout_s)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        self.thread.join(timeout=self.stop_timeout_s)
+        return False
 
     @property
-    def baseline_mib(self) -> int:
-        return self.samples[0]
-
-    @property
-    def peak_mib(self) -> int:
-        return max(self.samples)
-
-    @property
-    def peak_over_baseline_gib(self) -> float:
-        return (self.peak_mib - self.baseline_mib) / MIB_PER_GIB
+    def peak_mib(self) -> int | None:
+        return max(self.samples) if self.samples else None

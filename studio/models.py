@@ -4,6 +4,9 @@ from studio.config import Config
 from studio.fs import private_dir, sha256_file
 from studio.secrets import read_secret
 
+# Passed on every download so an HF_ENDPOINT in the environment cannot send the token elsewhere.
+HF_URL = "https://huggingface.co"
+
 
 def hf_hub_download(**kwargs) -> str:
     # Imported on use: only `studio models fetch` needs the Hugging Face client.
@@ -35,5 +38,5 @@ def fetch(cfg: Config, name: str) -> list[str]:
     private_dir(cfg.models_dir)
     for f in pinned.files:
         hf_hub_download(repo_id=pinned.repo, filename=f.path, revision=pinned.revision, local_dir=cfg.models_dir,
-                        token=token)
+                        token=token, endpoint=HF_URL)
     return verify(cfg, name)

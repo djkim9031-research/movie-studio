@@ -40,13 +40,22 @@ models:
       - {path: vae/ltx-2.5-audio-vae-bf16.safetensors, size: 364866540, sha256: c52733d37f6a7fb7949c3dc0fb468c6cb2169e4d836983a73babb9f0d54837a5}
       - {path: latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors, size: 995778752, sha256: eb5a71fe4068ee87ccdb1c3aa635e547ca76bd2d30ae20ae889f2c325c0677e8}
       - {path: latent_upscale_models/ltx-2.5-latent-temporal-upscaler-x2-bf16-1.0.safetensors, size: 261944000, sha256: 2bc3300f2b3c3c1834d72164fbf13a3b9fd73e5a741e8a2c3f4035f89a75c3fe}
+  gemma4-e2b:
+    # Prompt enhancer of the stock LTX-2.5 template; needed only for the web UI, where the template runs as-is.
+    repo: Comfy-Org/gemma-4
+    revision: 63d0f7c476756b88910170c1df75e2384ea1af31
+    files:
+      - {path: text_encoders/gemma4_e2b_it_int8_convrot.safetensors, size: 5199997904, sha256: efeca0fcad2f863e5ed0a75e3af952b72bc963604c1dda6d20aee87a32b17566}
 
 # ComfyUI v0.42.1 (2026-10-19, after the FLUX 3 Klein support merge); torch from the cu130 wheel index;
 # base image pinned by digest.
 comfyui:
-  image: studio-comfyui:v0.42.1
-  port: 8188
+  image_repo: studio-comfyui
   shm_gb: 16
+  network: studio-net
+  subnet: 192.168.131.0/29
+  gateway: 192.168.131.1
+  ip: 192.168.131.2
   commit: 63be2f9b82ad0dac88a7ceaa28a9cf3154125a18
   torch: 2.14.1
   base_image: nvidia/cuda:13.0.3-cudnn-runtime-ubuntu22.04@sha256:69550a36c714a050f162ff24cfa1832223648224962f27fb78420ce4b44713d1

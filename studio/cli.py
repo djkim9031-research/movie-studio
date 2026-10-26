@@ -113,7 +113,7 @@ def gpu_up():
     """Check the GPU is free, start the container and wait until ComfyUI answers."""
     cfg = _state["cfg"]
     runtime.up(cfg)
-    typer.echo(f"ComfyUI is up at http://127.0.0.1:{cfg.comfyui.port}")
+    typer.echo(f"ComfyUI is up at {cfg.comfyui.base_url}")
 
 
 @gpu_app.command("down")
@@ -137,10 +137,11 @@ def gpu_status():
                f"container pids {sorted(runtime.container_pids())}")
 
 
-def _report_clip(clip: Path, elapsed_s: float, peak_gib: float) -> None:
+def _report_clip(clip: Path, elapsed_s: float, peak_gib: float | None) -> None:
     info = ffmpeg.probe(_state["cfg"], clip)
+    peak = f"{peak_gib:.1f} GiB on the card" if peak_gib is not None else "not measured"
     typer.echo(f"PASS  {info['duration_s']:.2f} s {info['width']}x{info['height']} {info['fps']:g} fps, "
-               f"audio {info['audio']}, {elapsed_s:.1f} s wall, GPU memory peak {peak_gib:.1f} GiB on the card")
+               f"audio {info['audio']}, {elapsed_s:.1f} s wall, GPU memory peak {peak}")
     typer.echo(f"      {clip}")
 
 
@@ -207,7 +208,7 @@ def make_video(picture: Path = typer.Argument(..., help="Start frame: any photo 
         shutil.copyfile(result.clip, clip)
         clip.with_suffix(".txt").write_text(
             f"prompt: {prompt}\nseconds: {seconds}\nseed: {seed}\nsize: {size[0]}x{size[1]}\npicture: {picture}\n"
-            f"model: LTX-2.5 distilled int8 via ComfyUI {cfg.comfyui.image.split(':')[-1]}\n"
+            f"model: LTX-2.5 distilled int8, image {runtime.image_tag(cfg)}\n"
             f"render: {result.elapsed_s:.1f} s\n")
         _report_clip(clip, result.elapsed_s, result.peak_gib)
     finally:

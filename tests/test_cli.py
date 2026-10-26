@@ -57,7 +57,7 @@ def test_gpu_up_prints_the_local_address(monkeypatch):
     monkeypatch.setattr("studio.gpu.runtime.up", lambda cfg: None)
     result = CliRunner().invoke(app, ["gpu", "up"])
     assert result.exit_code == 0, result.output
-    assert "http://127.0.0.1:8188" in result.output
+    assert "http://192.168.131.2:8188" in result.output
 
 
 def test_render_test_reports_a_failed_render_on_one_line(tmp_path, monkeypatch):

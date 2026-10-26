@@ -54,7 +54,7 @@ def output_path(root: Path, subfolder: str, filename: str) -> Path:
 class Render:
     clip: Path
     elapsed_s: float
-    peak_gib: float
+    peak_gib: float | None
 
 
 def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, size: tuple[int, int],
@@ -75,4 +75,4 @@ def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, s
         raise RenderError(f"the run finished without an MP4: {output_files(entry)}")
     subfolder, filename, _ = videos[0]
     return Render(clip=output_path(cfg.comfy_io_dir / "output", subfolder, filename), elapsed_s=elapsed,
-                  peak_gib=vram.peak_mib / 1024)
+                  peak_gib=vram.peak_mib / 1024 if vram.peak_mib is not None else None)

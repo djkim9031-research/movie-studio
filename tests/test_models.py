@@ -39,6 +39,7 @@ def test_verify_names_missing_short_and_altered_files(tmp_path):
 
 
 def test_fetch_downloads_each_file_at_the_pinned_revision_then_verifies(tmp_path, monkeypatch):
+    monkeypatch.setenv("HF_ENDPOINT", "https://mirror.example.invalid")
     payload = b"weights"
     entry = {"path": "vae/a.safetensors", "size": len(payload), "sha256": hashlib.sha256(payload).hexdigest()}
     cfg = make_config(tmp_path, [entry])
@@ -58,7 +59,7 @@ def test_fetch_downloads_each_file_at_the_pinned_revision_then_verifies(tmp_path
     monkeypatch.setattr(models, "hf_hub_download", fake_download)
     assert models.fetch(cfg, "demo") == []
     assert calls == [{"repo_id": "org/demo", "filename": "vae/a.safetensors", "revision": "abc123",
-                      "local_dir": cfg.models_dir, "token": "hf_test"}]
+                      "local_dir": cfg.models_dir, "token": "hf_test", "endpoint": "https://huggingface.co"}]
 
 
 def test_read_secret_reads_the_named_key(tmp_path):

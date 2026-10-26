@@ -51,13 +51,21 @@ class FfmpegConfig(BaseModel):
 
 
 class ComfyConfig(BaseModel):
-    image: str = "studio-comfyui:dev"
-    port: int = 8188
+    image_repo: str = "studio-comfyui"
     shm_gb: int = 16
+    # An internal Docker network: the host reaches ComfyUI at `ip`, the container reaches nothing outside.
+    network: str = "studio-net"
+    subnet: str = "192.168.131.0/29"
+    gateway: str = "192.168.131.1"
+    ip: str = "192.168.131.2"
     # Build inputs, pinned before the first build: base image by digest, ComfyUI by commit.
     base_image: str | None = None
     commit: str | None = None
     torch: str | None = None
+
+    @property
+    def base_url(self) -> str:
+        return f"http://{self.ip}:8188"
 
 
 class ModelFile(BaseModel):
