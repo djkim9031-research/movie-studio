@@ -9,7 +9,7 @@ from pathlib import Path
 from studio.config import Config
 from studio.fs import copy_into, copy_out, private_dir
 from studio.gpu import runtime
-from studio.gpu.comfy import RenderError, output_files
+from studio.gpu.comfy import RenderError, cached_nodes, output_files
 from studio.gpu.vram import VramSampler
 from studio.media import ffmpeg
 from studio.workflow import fill, strip_prompt_enhancer
@@ -46,6 +46,7 @@ class Render:
     clip: Path
     elapsed_s: float
     peak_gib: float | None
+    reused_nodes: int = 0
 
 
 def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, size: tuple[int, int],
@@ -66,13 +67,20 @@ def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, s
     with VramSampler() as vram:
         entry = runtime.client(cfg).run(workflow, timeout_s=1800)
     elapsed = time.monotonic() - started
-    videos = [f for f in output_files(entry) if f[1].endswith(".mp4")]
-    if not videos:
+    clips = [(node_id, item) for node_id, out in entry.get("outputs", {}).items()
+             for items in out.values() if isinstance(items, list)
+             for item in items if isinstance(item, dict) and str(item.get("filename", "")).endswith(".mp4")]
+    if not clips:
         raise RenderError(f"the run finished without an MP4: {output_files(entry)}")
-    subfolder, filename, _ = videos[0]
+    node_id, item = clips[0]
+    reused = cached_nodes(entry)
+    if node_id in reused:
+        raise RenderError("ComfyUI reused the clip of an identical earlier run, so nothing was rendered; "
+                          "change --seed or restart ComfyUI to render it again")
+    subfolder, filename = item.get("subfolder", ""), item["filename"]
     try:
         copy_out(cfg.comfy_io_dir, ["output", *Path(subfolder).parts, filename], dest)
     except (ValueError, OSError) as error:
         raise RenderError(f"unsafe output path from ComfyUI: {subfolder}/{filename} ({error})") from None
     return Render(clip=Path(dest), elapsed_s=elapsed,
-                  peak_gib=vram.peak_mib / 1024 if vram.peak_mib is not None else None)
+                  peak_gib=vram.peak_mib / 1024 if vram.peak_mib is not None else None, reused_nodes=len(reused))

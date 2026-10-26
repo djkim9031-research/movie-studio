@@ -136,12 +136,13 @@ def gpu_status():
                f"container pids {sorted(runtime.container_pids())}")
 
 
-def _report_clip(clip: Path, elapsed_s: float, peak_gib: float | None) -> None:
-    info = ffmpeg.probe(_state["cfg"], clip)
-    peak = f"{peak_gib:.1f} GiB on the card" if peak_gib is not None else "not measured"
+def _report_clip(result) -> None:
+    info = ffmpeg.probe(_state["cfg"], result.clip)
+    peak = f"{result.peak_gib:.1f} GiB on the card" if result.peak_gib is not None else "not measured"
+    reused = f", {result.reused_nodes} nodes reused from an earlier run" if result.reused_nodes else ""
     typer.echo(f"PASS  {info['duration_s']:.2f} s {info['width']}x{info['height']} {info['fps']:g} fps, "
-               f"audio {info['audio']}, {elapsed_s:.1f} s wall, GPU memory peak {peak}")
-    typer.echo(f"      {clip}")
+               f"audio {info['audio']}, {result.elapsed_s:.1f} s wall, GPU memory peak {peak}{reused}")
+    typer.echo(f"      {result.clip}")
 
 
 def _gpu_ours_or_exit(cfg: Config) -> None:
@@ -172,7 +173,7 @@ def render_test(seconds: int = typer.Option(5, help="Clip length in whole second
     except (RenderError, WorkflowError, TimeoutError) as error:
         typer.echo(f"FAIL  {error}")
         raise typer.Exit(1)
-    _report_clip(result.clip, result.elapsed_s, result.peak_gib)
+    _report_clip(result)
 
 
 @app.command("make-video")
@@ -207,7 +208,7 @@ def make_video(picture: Path = typer.Argument(..., help="Start frame: any photo 
             f"prompt: {prompt}\nseconds: {seconds}\nseed: {seed}\nsize: {size[0]}x{size[1]}\npicture: {picture}\n"
             f"model: LTX-2.5 distilled int8, image {runtime.image_tag(cfg)}\n"
             f"render: {result.elapsed_s:.1f} s\n")
-        _report_clip(clip, result.elapsed_s, result.peak_gib)
+        _report_clip(result)
     finally:
         if started_here and not keep_up:
             runtime.down(cfg)
