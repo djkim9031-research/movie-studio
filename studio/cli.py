@@ -255,8 +255,8 @@ def _comfy_session(cfg: Config, keep_up: bool):
 
 
 @scene_app.command("stills")
-def scene_stills(pictures: list[Path] = typer.Argument(..., help="Photos of the person, and pictures of places or "
-                                                                 "things to use."),
+def scene_stills(pictures: list[Path] = typer.Argument(..., help="A folder of pictures, or picture files: photos of "
+                                                                 "the person and pictures of places or things."),
                  prompt: str = typer.Option(..., help="The scene in your words: place, look, expression, motion."),
                  name: str = typer.Option(..., help="Scene name; its folder is projects/scenes/NAME."),
                  count: int = typer.Option(4, min=1, max=12, help="How many stills to make."),

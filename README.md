@@ -89,19 +89,25 @@ saved next to it as `stillN.graph.json`.
 
 ## Make a scene
 
-1. Collect the pictures:
+1. Put the pictures for the scene in one folder, for example `~/pictures/space`:
    - 6 to 10 photos of the person: sharp, face clearly visible, a few angles and kinds of light, no beauty filter.
      Photos with other people in them are fine; their faces are blurred out of the crops.
    - Optional pictures of places or things the scene should show. A real photo beats a description: for a planet,
      a NASA photo (public domain) gives the right rings and light.
+
+   Every JPEG, PNG or WebP picture directly in the folder is read, up to 60; subfolders and other files are left
+   alone. The person in most of the photos is the subject, and their 6 best faces are used. Export HEIC photos
+   (iPhone) as JPEG first.
 
 2. Make the stills (4 by default, about a minute each):
 
    ```sh
    uv run studio scene stills --name space \
      --prompt "me floating in space with Saturn in the background, thin smile, float around" \
-     ~/pictures/me1.jpg ~/pictures/me2.jpg ~/pictures/me3.jpg ~/pictures/saturn.jpg
+     ~/pictures/space
    ```
+
+   Picture files work too, instead of the folder or next to it.
 
    Open the review page it prints, `~/studio-data/projects/scenes/space/review.html`, in a browser and note the
    numbers of the stills that look most like the person.

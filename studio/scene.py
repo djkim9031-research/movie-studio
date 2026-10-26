@@ -67,11 +67,14 @@ def make_stills(cfg: Config, *, name: str, prompt: str, pictures: list[Path], co
     # A folder without scene.json is a run that stopped before its prompts were written; it may run again.
     if (folder / "scene.json").exists():
         raise SceneError(f"scene {name} exists in {folder}; pick another name")
+    try:
+        pictures, unreadable = refs.gather(pictures)
+    except ValueError as error:
+        raise SceneError(str(error)) from None
+    for source, reason in unreadable:
+        echo(f"refs  skipped {source}: {reason}")
     if not pictures:
-        raise SceneError("give at least one picture")
-    for picture in pictures:
-        if not Path(picture).is_file():
-            raise SceneError(f"no picture at {picture}")
+        raise SceneError("no pictures found")
     private_dir(folder)
     report = refs.prepare(pictures, folder / "refs", tools)
     for ref in report.used:

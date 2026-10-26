@@ -133,3 +133,17 @@ def test_make_stills_can_run_again_after_the_prompt_call_failed(cfg, tmp_path, f
     made = scene.make_stills(cfg, name="moon", prompt="x", pictures=pictures(tmp_path), count=1, portrait=False,
                              claude=FakeClaude(), tools=TOOLS, echo=print)
     assert len(made["stills"]) == 1
+
+
+def test_make_stills_takes_a_folder_of_pictures(cfg, tmp_path, fake_stills):
+    folder = tmp_path / "pictures"
+    folder.mkdir()
+    pictures(folder)
+    (folder / "readme.txt").write_text("not a picture")
+    lines = []
+    scene.make_stills(cfg, name="moon", prompt="x", pictures=[folder], count=1, portrait=False,
+                      claude=FakeClaude(), tools=TOOLS, echo=lines.append)
+    refs_dir = cfg.projects_dir / "scenes" / "moon" / "refs"
+    assert sorted(p.name for p in refs_dir.iterdir()) == ["extra1.png", "extra1_square.png", "person1.png",
+                                                          "person2.png"]
+    assert fake_stills and not any("readme.txt" in line for line in lines)

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, features
 
 from studio.fs import private_dir
 
@@ -20,6 +20,10 @@ SAME_PERSON = 0.363
 NEAR_COPY = 0.9
 MAX_REFERENCES = 10
 MAX_PERSON = 6
+MAX_PICTURES = 60
+PICTURE_TYPES = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"} | (
+    {".avif"} if features.check("avif") else set())
+HEIC_TYPES = {".heic", ".heif"}
 CROP_SIDE = 1024
 EXTRA_LONG_SIDE = 2048
 
@@ -214,13 +218,44 @@ def save_png(bgr: np.ndarray, path: Path) -> Path:
     return path
 
 
+def gather(paths: list[Path]) -> tuple[list[Path], list[tuple[str, str]]]:
+    """Pictures from files and folders: every picture directly inside a folder, in name order, each picture once.
+    Hidden files, subfolders and other files are left out; HEIC files are reported."""
+    pictures, skipped, seen = [], [], set()
+
+    def take(path: Path) -> None:
+        suffix = path.suffix.lower()
+        if suffix in HEIC_TYPES:
+            skipped.append((path.name, "HEIC is not supported yet; export it as JPEG"))
+        elif suffix in PICTURE_TYPES and path.resolve() not in seen:
+            seen.add(path.resolve())
+            pictures.append(path)
+
+    for path in map(Path, paths):
+        if path.is_dir():
+            for child in sorted(path.iterdir(), key=lambda c: c.name.lower()):
+                if child.is_file() and not child.name.startswith("."):
+                    take(child)
+        elif path.is_file():
+            if path.suffix.lower() not in PICTURE_TYPES | HEIC_TYPES:
+                skipped.append((path.name, "not a picture"))
+            take(path)
+        else:
+            raise ValueError(f"no picture or folder at {path}")
+    if len(pictures) > MAX_PICTURES:
+        raise ValueError(f"{len(pictures)} pictures given; a scene takes at most {MAX_PICTURES}")
+    return pictures, skipped
+
+
 def prepare(pictures: list[Path], out: Path, tools) -> Report:
+    """Faces are found picture by picture; only the pictures used are read again, so a folder of photos never sits
+    in memory at once."""
     if not pictures:
         raise ValueError("no pictures given")
     out = private_dir(out)
     keys = [f"{i}:{Path(p).name}" for i, p in enumerate(pictures)]
-    images = {key: load(Path(p)) for key, p in zip(keys, pictures)}
-    faces = {key: tools.faces(images[key]) for key in keys}
+    paths = dict(zip(keys, map(Path, pictures)))
+    faces = {key: tools.faces(load(paths[key])) for key in keys}
     subject = find_subject(faces)
     chosen = best_faces(subject)
     chosen_keys = {key for key, _ in chosen}
@@ -228,7 +263,7 @@ def prepare(pictures: list[Path], out: Path, tools) -> Report:
     report = Report()
     for n, (key, face) in enumerate(sorted(chosen, key=lambda item: keys.index(item[0])), start=1):
         others = [f for f in faces[key] if f is not face]
-        file = save_png(square_crop(images[key], face, others), out / f"person{n}.png")
+        file = save_png(square_crop(load(paths[key]), face, others), out / f"person{n}.png")
         report.used.append(Reference("person", file, file, key.split(":", 1)[1], int(face.box[3]),
                                      round(face.sharpness, 1)))
     extras = 0
@@ -244,7 +279,7 @@ def prepare(pictures: list[Path], out: Path, tools) -> Report:
             report.skipped.append((name, f"over the {MAX_REFERENCES}-reference limit"))
         else:
             extras += 1
-            full, square = extra_versions(images[key])
+            full, square = extra_versions(load(paths[key]))
             report.used.append(Reference("extra", save_png(full, out / f"extra{extras}.png"),
                                          save_png(square, out / f"extra{extras}_square.png"), name))
     return report

@@ -123,3 +123,49 @@ def test_prepare_caps_the_references_at_ten(tmp_path):
 def test_prepare_refuses_no_pictures(tmp_path):
     with pytest.raises(ValueError):
         refs.prepare([], tmp_path / "refs", FakeTools({}))
+
+
+def test_gather_reads_every_picture_in_a_folder_in_name_order(tmp_path):
+    folder = tmp_path / "scene"
+    folder.mkdir()
+    for name in ["b.JPG", "a.jpeg", "c.png", "d.webp"]:
+        write(folder / name, (64, 64), exif=False)
+    (folder / "notes.txt").write_text("not a picture")
+    (folder / ".hidden.jpg").write_bytes(b"x")
+    (folder / "sub").mkdir()
+    write(folder / "sub" / "deep.jpg", (64, 64), exif=False)
+    (folder / "phone.heic").write_bytes(b"x")
+    pictures, skipped = refs.gather([folder])
+    assert [p.name for p in pictures] == ["a.jpeg", "b.JPG", "c.png", "d.webp"]
+    assert skipped == [("phone.heic", "HEIC is not supported yet; export it as JPEG")]
+
+
+def test_gather_mixes_files_and_folders_and_counts_a_picture_once(tmp_path):
+    folder = tmp_path / "me"
+    folder.mkdir()
+    write(folder / "me1.jpg", (64, 64), exif=False)
+    saturn = write(tmp_path / "saturn.png", (64, 32), exif=False)
+    pictures, _ = refs.gather([folder, saturn, folder / "me1.jpg"])
+    assert [p.name for p in pictures] == ["me1.jpg", "saturn.png"]
+
+
+def test_gather_refuses_a_missing_path_and_too_many_pictures(tmp_path):
+    with pytest.raises(ValueError, match="no picture or folder"):
+        refs.gather([tmp_path / "missing"])
+    folder = tmp_path / "many"
+    folder.mkdir()
+    for i in range(refs.MAX_PICTURES + 1):
+        (folder / f"p{i:03d}.jpg").write_bytes(b"x")
+    with pytest.raises(ValueError, match="at most 60"):
+        refs.gather([folder])
+
+
+def test_prepare_reads_only_the_pictures_it_uses_a_second_time(tmp_path, monkeypatch):
+    pics = [write(tmp_path / "p1.jpg", (2000, 1500)), write(tmp_path / "other.jpg", (1600, 1500)),
+            write(tmp_path / "saturn.png", (1400, 700), exif=False)]
+    tools = FakeTools({(1500, 2000): [face(800, 400, 500, ME)], (1500, 1600): [face(600, 400, 500, OTHER)]})
+    loads = []
+    real = refs.load
+    monkeypatch.setattr(refs, "load", lambda path: loads.append(path.name) or real(path))
+    refs.prepare(pics, tmp_path / "refs", tools)
+    assert sorted(loads) == ["other.jpg", "p1.jpg", "p1.jpg", "saturn.png", "saturn.png"]

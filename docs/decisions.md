@@ -61,3 +61,6 @@
 - Clips: LTX-2.5 distilled int8, 5 s at 1280x704, as make-video.
 - Each run removes its copies from ComfyUI's input and output folders, without following links.
 - The face models sit in `models/faces`, outside ComfyUI's model folders.
+- Pictures come as a folder, files, or both: every picture directly in a folder (JPEG, PNG, WebP; at most 60) in
+  name order, each once. Faces are found one picture at a time and only the pictures used are read again, so a full
+  folder never sits in memory. HEIC is reported, not read: Pillow needs an extra library for it.

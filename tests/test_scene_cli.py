@@ -1,3 +1,4 @@
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -36,13 +37,16 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr("studio.scene.render_still", render_still)
     monkeypatch.setattr("studio.scene.render_i2v", render_i2v)
     monkeypatch.setattr("studio.scene.prepare_still", lambda cfg, picture, out, size: picture)
-    pictures = [str(write(tmp_path / "a.jpg", (2000, 1500))), str(write(tmp_path / "b.jpg", (1800, 1500)))]
+    (tmp_path / "pictures").mkdir()
+    pictures = [str(write(tmp_path / "pictures" / "a.jpg", (2000, 1500))),
+                str(write(tmp_path / "pictures" / "b.jpg", (1800, 1500)))]
     return cfg_file, pictures, tmp_path / "data" / "projects" / "scenes"
 
 
 def test_scene_stills_then_clips(setup):
     cfg_file, pictures, scenes = setup
-    result = CliRunner().invoke(app, ["--config", str(cfg_file), "scene", "stills", *pictures, "--name", "moon",
+    folder = Path(pictures[0]).parent
+    result = CliRunner().invoke(app, ["--config", str(cfg_file), "scene", "stills", str(folder), "--name", "moon",
                                       "--prompt", "me on the moon", "--count", "2"])
     assert result.exit_code == 0, result.output
     assert "PASS  2 stills" in result.output and str(scenes / "moon" / "review.html") in result.output
