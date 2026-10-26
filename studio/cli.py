@@ -10,7 +10,7 @@ import anthropic
 import typer
 from pydantic import ValidationError
 
-from studio import bench, blind, identity, keyframe_bench, models, provenance, refs, scene
+from studio import bench, blind, cast, identity, keyframe_bench, models, provenance, refs, scene
 from studio.claude.client import Claude, CredentialsError, Refused
 from studio.claude.ledger import BudgetExceeded, Ledger, summarize
 from studio.config import Config, load_config
@@ -39,6 +39,8 @@ identity_app = typer.Typer(no_args_is_help=True, help="Face profiles of real peo
 app.add_typer(identity_app, name="identity")
 bench_app = typer.Typer(no_args_is_help=True, help="Fixed benches that measure variants against each other.")
 app.add_typer(bench_app, name="bench")
+cast_app = typer.Typer(no_args_is_help=True, help="A person's capture: photos and videos in cast/ALIAS.")
+app.add_typer(cast_app, name="cast")
 RENDER_TEST_PROMPT = ("A slow push-in toward a misty pond at morning. Fog drifts low across the water, willow "
                       "leaves and tall meadow grass sway in a light breeze, soft sunlight. Quiet outdoor ambience: "
                       "light wind and distant birds.")
@@ -584,3 +586,24 @@ def bench_pick(name: str = typer.Argument(..., help="The blind set."),
     scored = report["agree"] + report["disagree"]
     typer.echo(f"scores agree {report['agree']} of {scored} picks where they differ by more than {bench.DELTA:.2f}; "
                f"no preference {report['ties']}")
+
+
+@cast_app.command("ingest")
+def cast_ingest(person: str = typer.Option(..., help="Alias: the folder name under cast/."),
+                per_bin: int = typer.Option(5, min=1, help="Images kept per head-angle bin."),
+                fps: float = typer.Option(2.0, help="Frames read per second of video."),
+                trigger: str = typer.Option(None, help="Caption trigger word; default zq plus the alias."),
+                replace: bool = typer.Option(False, "--replace", help="Build the dataset again.")):
+    """Turn cast/ALIAS/{photos,video} into a training set binned by head angle, near-copies dropped, each image
+    checked against the person's profile and traced back to its camera file."""
+    cfg = _state["cfg"]
+    _models_or_exit(cfg, ["face-detect", "face-id"])
+    try:
+        report = cast.ingest(cfg, person, face_tools(cfg), echo=typer.echo, per_bin=per_bin, fps=fps,
+                             trigger=trigger, replace=replace)
+    except (ValueError, FileNotFoundError) as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    if report["missing"]:
+        typer.echo(f"missing angles: {', '.join(report['missing'])}; film those to fill them")
+    typer.echo(f"PASS  {report['kept']} images in {report['dataset']}, trigger word {report['trigger']}")

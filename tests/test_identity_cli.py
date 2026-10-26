@@ -143,3 +143,12 @@ def test_blind_keyframes_groups_each_shot_across_engines(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     key = json.loads((tmp_path / "bench" / "blind" / "kf" / "key.json").read_text())
     assert len(key["groups"]) == 1 and len(key["groups"][0]["options"]) == 3
+
+
+def test_cast_ingest_reports_kept_images_and_missing_angles(tmp_path, monkeypatch):
+    cfg_file, _ = setup(tmp_path, monkeypatch)
+    assert run(cfg_file, "identity", "profile", "--person", "me").exit_code == 0
+    (tmp_path / "cast" / "me" / "consent.txt").write_text("me, 2026-10-26, local films\n")
+    result = run(cfg_file, "cast", "ingest", "--person", "me")
+    assert result.exit_code == 0, result.output
+    assert "PASS  4 images in" in result.output and "missing angles: slightly turned" in result.output
