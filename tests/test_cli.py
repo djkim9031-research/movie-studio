@@ -77,7 +77,7 @@ def test_render_test_reports_a_failed_render_on_one_line(tmp_path, monkeypatch):
     monkeypatch.setattr("studio.gpu.runtime.container_pids", lambda: set())
     monkeypatch.setattr("studio.cli.run_preflight", lambda *a, **k: Verdict(ok=True))
     monkeypatch.setattr("studio.gpu.runtime.client", lambda cfg: FailingClient())
-    monkeypatch.setattr("studio.cli.VramSampler", lambda: _NoSampler())
+    monkeypatch.setattr("studio.render.VramSampler", lambda: _NoSampler())
     result = CliRunner().invoke(app, ["--config", str(cfg_file), "render-test"])
     assert result.exit_code == 1
     assert "FAIL  CLIPTextEncode: Failed to find C compiler" in result.output
@@ -127,7 +127,7 @@ def test_render_test_reports_the_clip_and_the_absolute_gpu_memory_peak(tmp_path,
     monkeypatch.setattr("studio.gpu.runtime.container_pids", lambda: set())
     monkeypatch.setattr("studio.cli.run_preflight", lambda *a, **k: Verdict(ok=True))
     monkeypatch.setattr("studio.gpu.runtime.client", lambda cfg: DoneClient())
-    monkeypatch.setattr("studio.cli.VramSampler", Peak)
+    monkeypatch.setattr("studio.render.VramSampler", Peak)
     result = CliRunner().invoke(app, ["--config", str(cfg_file), "render-test"])
     assert result.exit_code == 0, result.output
     assert "PASS  10.00 s 1280x720 24 fps, audio aac" in result.output

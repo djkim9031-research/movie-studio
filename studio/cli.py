@@ -1,23 +1,23 @@
-import json
+import re
+import secrets
 import shutil
-import time
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
 import typer
 
 from studio import models
-from studio.fs import private_dir
-from studio.gpu import runtime
-from studio.gpu.comfy import RenderError, WorkflowError, output_files
-from studio.gpu.preflight import run_preflight
-from studio.gpu.vram import VramSampler
-from studio.workflow import fill, strip_prompt_enhancer
 from studio.claude.ledger import Ledger, summarize
 from studio.config import Config, load_config
 from studio.doctor import exit_code, run_doctor
+from studio.fs import private_dir
+from studio.gpu import runtime
+from studio.gpu.comfy import RenderError, WorkflowError
+from studio.gpu.preflight import run_preflight
 from studio.media import ffmpeg
 from studio.media.smoke import TARGET_LUFS, smoke_mux
+from studio.render import LANDSCAPE, image_size, prepare_still, render_i2v, target_size
 
 # Tracebacks must never print locals: the Claude client holds the API key.
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False,
@@ -26,7 +26,6 @@ models_app = typer.Typer(no_args_is_help=True, help="Pinned model weights.")
 app.add_typer(models_app, name="models")
 gpu_app = typer.Typer(no_args_is_help=True, help="The ComfyUI container on this GPU.")
 app.add_typer(gpu_app, name="gpu")
-WORKFLOWS = Path(__file__).resolve().parent.parent / "config" / "workflows"
 RENDER_TEST_PROMPT = ("A slow push-in toward a misty pond at morning. Fog drifts low across the water, willow "
                       "leaves and tall meadow grass sway in a light breeze, soft sunlight. Quiet outdoor ambience: "
                       "light wind and distant birds.")
@@ -138,49 +137,79 @@ def gpu_status():
                f"container pids {sorted(runtime.container_pids())}")
 
 
+def _report_clip(clip: Path, elapsed_s: float, peak_gib: float) -> None:
+    info = ffmpeg.probe(_state["cfg"], clip)
+    typer.echo(f"PASS  {info['duration_s']:.2f} s {info['width']}x{info['height']} {info['fps']:g} fps, "
+               f"audio {info['audio']}, {elapsed_s:.1f} s wall, GPU memory peak {peak_gib:.1f} GiB on the card")
+    typer.echo(f"      {clip}")
+
+
+def _gpu_ours_or_exit(cfg: Config) -> None:
+    verdict = run_preflight(cfg.gpu.agent_service, min_free_gib=0, own_pids=runtime.container_pids())
+    if not verdict.ok:
+        typer.echo("FAIL  " + "; ".join(verdict.problems))
+        raise typer.Exit(1)
+
+
 @app.command("render-test")
 def render_test(seconds: int = typer.Option(5, help="Clip length in whole seconds (24 fps gives 8n+1 frames)."),
                 seed: int = typer.Option(42, help="Noise seed."),
-                still: Path = typer.Option(None, help="Start frame; default projects/_tests/still.png."),
+                still: Path = typer.Option(None, help="Start frame, 1280x704; default projects/_tests/still.png."),
                 prompt: str = typer.Option(RENDER_TEST_PROMPT, help="What happens in the clip.")):
     """Render one LTX-2.5 image-to-video clip and report time, GPU memory and the file."""
     cfg = _state["cfg"]
     if not runtime.is_running():
         typer.echo("FAIL  ComfyUI is down; run: uv run studio gpu up")
         raise typer.Exit(1)
-    verdict = run_preflight(cfg.gpu.agent_service, min_free_gib=0, own_pids=runtime.container_pids())
-    if not verdict.ok:
-        typer.echo("FAIL  " + "; ".join(verdict.problems))
-        raise typer.Exit(1)
-    template_path, slots_path = WORKFLOWS / "ltx25_i2v.json", WORKFLOWS / "ltx25_i2v.slots.json"
-    if not template_path.exists() or not slots_path.exists():
-        typer.echo(f"FAIL  {template_path.name} and its slot map are missing; export the workflow first")
-        raise typer.Exit(1)
+    _gpu_ours_or_exit(cfg)
     still = still or cfg.projects_dir / "_tests" / "still.png"
     if not still.exists():
         typer.echo(f"FAIL  no start frame at {still}")
         raise typer.Exit(1)
-    shutil.copyfile(still, cfg.comfy_io_dir / "input" / "render_test.png")
-    workflow = fill(strip_prompt_enhancer(json.loads(template_path.read_text())), json.loads(slots_path.read_text()),
-                    {"prompt": prompt, "image": "render_test.png", "seconds": seconds, "width": 1280, "height": 704,
-                     "seed": seed, "prefix": "studio/render_test"})
-    started = time.monotonic()
     try:
-        with VramSampler() as vram:
-            entry = runtime.client(cfg).run(workflow, timeout_s=1800)
+        result = render_i2v(cfg, still, prompt, seconds, seed, LANDSCAPE, "render_test")
     except (RenderError, WorkflowError, TimeoutError) as error:
         typer.echo(f"FAIL  {error}")
         raise typer.Exit(1)
-    elapsed = time.monotonic() - started
-    videos = [f for f in output_files(entry) if f[1].endswith(".mp4")]
-    if not videos:
-        typer.echo(f"FAIL  the run finished without an MP4: {output_files(entry)}")
-        raise typer.Exit(1)
-    subfolder, filename, _ = videos[0]
     out = private_dir(cfg.projects_dir / "_tests") / f"ltx25_render_test_seed{seed}.mp4"
-    shutil.copyfile(cfg.comfy_io_dir / "output" / subfolder / filename, out)
-    info = ffmpeg.probe(cfg, out)
-    typer.echo(f"PASS  {info['duration_s']:.2f} s {info['width']}x{info['height']} {info['fps']:g} fps, "
-               f"audio {info['audio']}, {elapsed:.1f} s wall, GPU memory peak "
-               f"{vram.peak_mib / 1024:.1f} GiB on the card")
-    typer.echo(f"      {out}")
+    shutil.copyfile(result.clip, out)
+    _report_clip(out, result.elapsed_s, result.peak_gib)
+
+
+@app.command("make-video")
+def make_video(picture: Path = typer.Argument(..., help="Start frame: any photo or image."),
+               prompt: str = typer.Option(..., help="What happens in the clip, including its sound."),
+               seconds: int = typer.Option(5, help="Clip length in whole seconds."),
+               seed: int = typer.Option(None, help="Noise seed; random when omitted, printed either way."),
+               name: str = typer.Option(None, help="Output name; default the picture's file name."),
+               keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running for another clip.")):
+    """Make one clip with sound from a picture and a prompt. Everything runs on this machine."""
+    cfg = _state["cfg"]
+    if not picture.exists():
+        typer.echo(f"FAIL  no picture at {picture}")
+        raise typer.Exit(1)
+    seed = seed if seed is not None else secrets.randbelow(2**31)
+    name = re.sub(r"[^A-Za-z0-9_-]+", "-", name or picture.stem).strip("-") or "clip"
+    started_here = not runtime.is_running()
+    if started_here:
+        runtime.up(cfg)
+    try:
+        _gpu_ours_or_exit(cfg)
+        size = target_size(*image_size(cfg, picture))
+        with tempfile.TemporaryDirectory() as tmp:
+            still = prepare_still(cfg, picture, Path(tmp) / "start.png", size)
+            try:
+                result = render_i2v(cfg, still, prompt, seconds, seed, size, name)
+            except (RenderError, WorkflowError, TimeoutError) as error:
+                typer.echo(f"FAIL  {error}")
+                raise typer.Exit(1)
+        clip = private_dir(cfg.projects_dir / "videos") / f"{name}-seed{seed}.mp4"
+        shutil.copyfile(result.clip, clip)
+        clip.with_suffix(".txt").write_text(
+            f"prompt: {prompt}\nseconds: {seconds}\nseed: {seed}\nsize: {size[0]}x{size[1]}\npicture: {picture}\n"
+            f"model: LTX-2.5 distilled int8 via ComfyUI {cfg.comfyui.image.split(':')[-1]}\n"
+            f"render: {result.elapsed_s:.1f} s\n")
+        _report_clip(clip, result.elapsed_s, result.peak_gib)
+    finally:
+        if started_here and not keep_up:
+            runtime.down(cfg)
