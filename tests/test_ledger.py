@@ -4,7 +4,7 @@ import pytest
 from anthropic.types import Message
 from anthropic.types.beta import BetaMessage
 
-from studio.claude.ledger import BudgetExceeded, Hop, Ledger, hops_from_message, price_hop
+from studio.claude.ledger import BudgetExceeded, Hop, Ledger, hops_from_message, price_hop, summarize
 from studio.config import ClaudeConfig, Price
 
 PRICES = ClaudeConfig(
@@ -92,3 +92,15 @@ def test_caps_refuse_when_the_month_cap_is_reached(tmp_path):
         ledger.record(route="doctor", film=film, hops=[Hop("claude-opus-5-5", input_tokens=M // 4)])
     with pytest.raises(BudgetExceeded, match="2026-10"):
         ledger.check_caps("d")
+
+
+def test_summary_totals_by_film_and_route_and_counts_unpriced_calls(tmp_path):
+    ledger = make_ledger(tmp_path)
+    ledger.record(route="doctor", film="a", hops=[Hop("claude-opus-5-5", input_tokens=M // 4)])
+    ledger.record(route="plan", film="a", hops=[Hop("claude-opus-5-5", output_tokens=M // 20)])
+    ledger.record(route="plan", film="b", hops=[Hop("claude-new", input_tokens=M // 10)])
+    summary = summarize(ledger.entries("2026-10"))
+    assert summary["calls"] == 3 and summary["unpriced_calls"] == 1
+    assert summary["total"] == pytest.approx(3.0)
+    assert summary["by_film"] == {"a": pytest.approx(2.0), "b": pytest.approx(1.0)}
+    assert summary["by_route"] == {"doctor": pytest.approx(1.0), "plan": pytest.approx(2.0)}

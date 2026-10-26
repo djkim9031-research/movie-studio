@@ -59,6 +59,19 @@ def hops_from_message(message, requested_model: str) -> list[Hop]:
     return [_hop(str(message.model), message.usage)]
 
 
+def summarize(entries: list[dict]) -> dict:
+    by_film: dict[str, float] = {}
+    by_route: dict[str, float] = {}
+    for row in entries:
+        by_film[row["film"]] = by_film.get(row["film"], 0.0) + row["usd"]
+        by_route[row["route"]] = by_route.get(row["route"], 0.0) + row["usd"]
+    return {"total": sum(row["usd"] for row in entries),
+            "calls": len(entries),
+            "unpriced_calls": sum(1 for row in entries if not all(hop["priced"] for hop in row["hops"])),
+            "by_film": by_film,
+            "by_route": by_route}
+
+
 class Ledger:
     def __init__(self, directory: Path, cfg: ClaudeConfig, clock=datetime.now):
         self.directory = Path(directory)
