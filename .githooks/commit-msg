@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Refuses a commit message with a deny-listed word or a secret.
+set -euo pipefail
+. "$(dirname "$0")/lib.sh"
+load_deny
+need_gitleaks
+
+# Everything above the scissors line that commit -v adds; comment lines are
+# kept on purpose, since git keeps them when the message comes from -m.
+msg=$(sed '/^# -\{24\} >8 -\{24\}$/,$d' "$1")
+check_deny "commit message" <<< "$msg"
+gitleaks stdin --redact --no-banner --log-level warn <<< "$msg" >&2 \
+    || fail "gitleaks: secret in the commit message"

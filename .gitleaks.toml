@@ -1,0 +1,5 @@
+# gitleaks settings for this repository: the default rules, none removed.
+title = "movie-studio"
+
+[extend]
+useDefault = true

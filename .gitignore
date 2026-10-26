@@ -1,0 +1,64 @@
+# Model weights and other large binaries
+*.safetensors
+*.gguf
+*.pt
+*.pth
+*.bin
+*.onnx
+*.engine
+*.plan
+*.ckpt
+*.npz
+
+# Data, databases and logs
+*.jsonl
+*.parquet
+*.db
+*.sqlite
+*.sqlite3
+*.log
+
+# Private folders; these live in a data folder outside the repository
+data/
+memory/
+logs/
+models/
+trajectories/
+secrets/
+cache/
+eval-private/
+
+# Secrets and encrypted files
+.env
+.env.*
+*.key
+*.pem
+*.age
+
+# Python and Node caches
+__pycache__/
+.venv/
+node_modules/
+.pytest_cache/
+*.egg-info/
+
+# Media and generated output; projects live in ~/studio-data
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.gif
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.aac
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.srt
+io/
+out/
+projects/
+cast/

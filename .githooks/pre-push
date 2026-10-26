@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Last local check before anything leaves the machine. The other hooks can
+# be skipped with --no-verify, so every pushed commit is checked again here.
+# Notes refs are refused outright.
+set -euo pipefail
+. "$(dirname "$0")/lib.sh"
+load_deny
+want_identity
+need_gitleaks
+
+remote=$1
+zero=$(git hash-object --stdin </dev/null | tr '0-9a-f' '0')
+mapfile -t updates
+for line in "${updates[@]}"; do
+    read -r lref lsha rref rsha <<< "$line"
+    case "$lref $rref" in *refs/notes/*) fail "notes ref in push: $rref" ;; esac
+    [ "$lsha" != "$zero" ] || continue    # deleting a remote ref
+    if [ "$rsha" = "$zero" ]; then
+        check_range "$lsha" --not --remotes="$remote"
+    else
+        git cat-file -e "$rsha^{commit}" 2>/dev/null || fail "remote has commits this clone lacks; fetch first"
+        check_range "$rsha..$lsha"
+    fi
+done

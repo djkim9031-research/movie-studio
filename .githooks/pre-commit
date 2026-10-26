@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Refuses a commit that adds a secret, an ignored or oversized file,
+# a deny-listed word, or comes from another identity.
+set -euo pipefail
+. "$(dirname "$0")/lib.sh"
+load_deny
+want_identity
+need_gitleaks
+
+for var in GIT_AUTHOR_IDENT GIT_COMMITTER_IDENT; do
+    who=$(git var "$var" | sed -E 's/ [0-9]+ [-+][0-9]{4}$//')
+    [ "$who" = "$WANT_NAME <$WANT_EMAIL>" ] || fail "wrong identity: $who, expected $WANT_NAME <$WANT_EMAIL>"
+done
+
+git diff --cached --name-only --diff-filter=ACMR | check_paths
+while read -r _ mode _ sha _ path; do
+    [ "$mode" != 160000 ] || continue    # submodule entry, no blob here
+    size=$(git cat-file -s "$sha")
+    [ "$size" -le "$HYGIENE_MAX_BYTES" ] || fail "file over 5 MB: $path ($size bytes)"
+done < <(git diff --cached --raw --no-abbrev --diff-filter=ACMR)
+git diff --cached -U0 --no-color --no-ext-diff | added_lines | check_deny "staged changes"
+gitleaks git --pre-commit --staged --redact --no-banner --log-level warn --verbose . >&2 \
+    || fail "gitleaks: secret in the staged changes"
