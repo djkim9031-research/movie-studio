@@ -46,6 +46,8 @@ def test_run_renders_every_cell_scores_it_against_the_profile_without_its_start_
                                                     yaw_range=0.3, scored=100))
 
     monkeypatch.setattr(bench.identity, "score_clip", score_clip)
+    monkeypatch.setattr(bench.identity, "score_image",
+                        lambda profile, tools, path: identity.Frame(t=0.0, sim=0.7, yaw=0.0, px=400))
     run_dir = tmp_path / "run"
     results = bench.run(cfg, alias="me", variant="ltx-int8-2stage", tools=tools, run_dir=run_dir, count=2,
                         echo=print, render=render)
@@ -60,3 +62,34 @@ def test_run_renders_every_cell_scores_it_against_the_profile_without_its_start_
     clip = run_dir / "clips" / results["cells"][0]["clip"]
     assert provenance.params(clip)["pinned_frames"] == [0] and provenance.problems(cfg, clip) == []
     assert (run_dir / "review.html").exists() and len(start_of) == 6
+    assert all(c["start_sim"] == 0.7 and c["drift"] == pytest.approx(-0.1) for c in results["cells"])
+
+
+@pytest.mark.parametrize("variant,kind,detail", [
+    ("ltx-int8-2stage", "template", None),
+    ("ltx-bf16-2stage", "template", "ltx-2.5-22b-distilled-transformer-bf16.safetensors"),
+    ("ltx-bf16-1stage", "graph", ("LTXVAddGuide", 1)),
+    ("ltx-bf16-1stage-loop", "graph", ("LTXVAddGuide", 2)),
+    ("wan-4step-1022", "graph", ("LoraLoaderModelOnly", 2)),
+    ("wan-20step", "graph", ("LoraLoaderModelOnly", 0)),
+])
+def test_each_variant_renders_through_its_own_graph(cfg, tmp_path, monkeypatch, variant, kind, detail):
+    calls = []
+    monkeypatch.setattr(bench, "render_i2v", lambda *a, **k: calls.append(("template", k.get("unet"))) or "ok")
+    monkeypatch.setattr(bench, "render_graph",
+                        lambda cfg, graph, images, **k: calls.append(("graph", graph, images)) or "ok")
+    start = tmp_path / "start.png"
+    assert bench.render(cfg, variant, start, "p", 5, 7, "x", tmp_path / "c.mp4") == "ok"
+    assert calls[0][0] == kind
+    if kind == "template":
+        assert calls[0][1] == detail
+    else:
+        graph, images = calls[0][1], calls[0][2]
+        assert sum(1 for n in graph.values() if n["class_type"] == detail[0]) == detail[1]
+        assert images == {"START": start}
+
+
+def test_every_variant_names_its_model_sets_and_pinned_frames():
+    for name, spec in bench.VARIANTS.items():
+        assert spec["models"] and spec["pinned"][0] == 0, name
+    assert bench.VARIANTS["ltx-bf16-1stage-loop"]["pinned"] == [0, -1]

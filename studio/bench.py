@@ -14,12 +14,21 @@ from studio import identity, provenance, refs
 from studio.config import Config
 from studio.fs import private_dir
 from studio.render import render_i2v
+from studio.video_graphs import WAN_LORAS_1022, ltx_single, render_graph, wan_i2v
 
 SPEC = Path(__file__).resolve().parent.parent / "config" / "bench" / "identity.yaml"
 SIZE = (1280, 704)
+LTX_BF16 = "ltx-2.5-22b-distilled-transformer-bf16.safetensors"
 
-# Variant name -> the model sets that make its clips; how each renders is in render().
-VARIANTS = {"ltx-int8-2stage": ["ltx25-int8"]}
+# Variant -> the model sets that make its clips and the frames copied from the start image (-1 is the last frame).
+VARIANTS = {
+    "ltx-int8-2stage": {"models": ["ltx25-int8"], "pinned": [0]},
+    "ltx-bf16-2stage": {"models": ["ltx25-int8", "ltx25-bf16"], "pinned": [0]},
+    "ltx-bf16-1stage": {"models": ["ltx25-int8", "ltx25-bf16"], "pinned": [0]},
+    "ltx-bf16-1stage-loop": {"models": ["ltx25-int8", "ltx25-bf16"], "pinned": [0, -1]},
+    "wan-4step-1022": {"models": ["wan22-i2v", "wan22-lightx2v-1022"], "pinned": [0]},
+    "wan-20step": {"models": ["wan22-i2v"], "pinned": [0]},
+}
 
 
 def choose_starts(cfg: Config, alias: str, tools, count: int = 6) -> list[tuple[Path, refs.Face]]:
@@ -41,9 +50,26 @@ def make_start(cfg: Config, photo: Path, face: refs.Face, dest: Path) -> Path:
 
 
 def render(cfg: Config, variant: str, start: Path, prompt: str, seconds: int, seed: int, name: str, dest: Path):
+    """LTX two-stage runs the exported template (int8 as today, or the BF16 transformer); the other variants run
+    graphs built from ComfyUI's single-stage LTX and Wan 2.2 templates."""
     if variant == "ltx-int8-2stage":
         return render_i2v(cfg, start, prompt, seconds, seed, SIZE, name, dest, cleanup=True)
-    raise ValueError(f"unknown variant {variant}; known: {', '.join(VARIANTS)}")
+    if variant == "ltx-bf16-2stage":
+        return render_i2v(cfg, start, prompt, seconds, seed, SIZE, name, dest, cleanup=True, unet=LTX_BF16)
+    prefix = f"bench/{name}"
+    if variant in ("ltx-bf16-1stage", "ltx-bf16-1stage-loop"):
+        last = "START" if variant.endswith("loop") else None
+        graph = ltx_single(prompt=prompt, first="START", last=last, size=SIZE, seconds=seconds, seed=seed,
+                           unet=LTX_BF16, prefix=prefix)
+    elif variant == "wan-4step-1022":
+        graph = wan_i2v(prompt=prompt, start="START", size=SIZE, seconds=seconds, seed=seed, steps=4, cfg=1.0,
+                        split=2, loras=WAN_LORAS_1022, prefix=prefix)
+    elif variant == "wan-20step":
+        graph = wan_i2v(prompt=prompt, start="START", size=SIZE, seconds=seconds, seed=seed, steps=20, cfg=3.5,
+                        split=10, loras=None, prefix=prefix)
+    else:
+        raise ValueError(f"unknown variant {variant}; known: {', '.join(VARIANTS)}")
+    return render_graph(cfg, graph, {"START": start}, name=name, dest=dest)
 
 
 def _write(path: Path, text: str) -> None:
@@ -64,22 +90,27 @@ def run(cfg: Config, *, alias: str, variant: str, tools, run_dir: Path, echo, co
     for photo, face in choose_starts(cfg, alias, tools, count):
         start = make_start(cfg, photo, face, starts_dir / f"{photo.stem}.png")
         cell_profile = profile.without(photo.name)
+        # The start frame's own score: drift is how far a clip falls from it.
+        start_sim = identity.score_image(cell_profile, tools, start).sim
         for motion, prompt in spec["motions"].items():
             for seed in seeds or spec["seeds"]:
                 clip = clips_dir / f"{photo.stem}-{motion}-{variant}-s{seed}.mp4"
                 made = render(cfg, variant, start, prompt, spec["seconds"], seed, f"bench_{photo.stem}_{motion}",
                               clip)
-                provenance.write(cfg, clip, kind="clip", models=VARIANTS[variant], inputs=[start],
+                pinned = VARIANTS[variant]["pinned"]
+                provenance.write(cfg, clip, kind="clip", models=VARIANTS[variant]["models"], inputs=[start],
                                  params={"variant": variant, "motion": motion, "seed": seed, "prompt": prompt,
-                                         "seconds": spec["seconds"], "pinned_frames": [0]})
+                                         "seconds": spec["seconds"], "pinned_frames": pinned})
                 problems = provenance.problems(cfg, clip)
                 if problems:
                     raise RuntimeError("; ".join(problems))
-                s = identity.score_clip(cell_profile, tools, clip, pinned=[0]).summary
+                s = identity.score_clip(cell_profile, tools, clip, pinned=pinned).summary
                 cell = {"start": photo.stem, "motion": motion, "seed": seed, "clip": clip.name,
                         "median": s.median, "mid_min": s.mid_min, "dips": s.dips, "dip_seconds": s.dip_seconds,
                         "coverage": round(s.coverage, 3), "yaw_range": round(s.yaw_range, 3),
                         "percentile": None if s.median is None else identity.percentile(cell_profile, s.median),
+                        "start_sim": start_sim,
+                        "drift": None if s.median is None or start_sim is None else s.median - start_sim,
                         "render_s": round(made.elapsed_s, 1)}
                 results["cells"].append(cell)
                 _write(run_dir / "results.json", json.dumps(results, indent=1) + "\n")
@@ -91,8 +122,9 @@ def run(cfg: Config, *, alias: str, variant: str, tools, run_dir: Path, echo, co
 def line(cell: dict) -> str:
     if cell["median"] is None:
         return f"{cell['start']:<10} {cell['motion']:<6} no scorable face (coverage {cell['coverage']:.0%})"
+    drift = f"drift {cell['drift']:+.3f} " if cell.get("drift") is not None else ""
     return (f"{cell['start']:<10} {cell['motion']:<6} median {cell['median']:.3f} (p{cell['percentile']:.0f}) "
-            f"min {cell['mid_min']:.3f} dips {cell['dips']} coverage {cell['coverage']:.0%} "
+            f"{drift}min {cell['mid_min']:.3f} dips {cell['dips']} coverage {cell['coverage']:.0%} "
             f"yaw {cell['yaw_range']:.2f} {cell['render_s']:.0f} s")
 
 

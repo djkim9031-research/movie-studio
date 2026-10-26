@@ -381,7 +381,7 @@ def bench_identity(person: str = typer.Option(..., help="Alias whose real photos
     if variant not in bench.VARIANTS:
         typer.echo(f"FAIL  unknown variant {variant}; known: {', '.join(bench.VARIANTS)}")
         raise typer.Exit(1)
-    _models_or_exit(cfg, ["face-detect", "face-id", *bench.VARIANTS[variant]])
+    _models_or_exit(cfg, ["face-detect", "face-id", *bench.VARIANTS[variant]["models"]])
     run_name = scene.clean_name(name or f"{datetime.now():%Y%m%d-%H%M}-{variant}")
     run_dir = cfg.data_root / "bench" / run_name
     if (run_dir / "results.json").exists():

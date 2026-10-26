@@ -5,5 +5,6 @@
   "width": "398:372.value",
   "height": "398:360.value",
   "seed": "398:339.noise_seed",
-  "prefix": "75.filename_prefix"
+  "prefix": "75.filename_prefix",
+  "unet": "398:384.unet_name"
 }

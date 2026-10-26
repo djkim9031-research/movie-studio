@@ -50,7 +50,7 @@ class Render:
 
 
 def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, size: tuple[int, int],
-               name: str, dest: Path, cleanup: bool = False) -> Render:
+               name: str, dest: Path, cleanup: bool = False, unet: str | None = None) -> Render:
     """One render with `still` (already `size`) as the first frame, saved to `dest`.
 
     ComfyUI's folders are writable from the container, so files go in and come out without following links. With
@@ -63,7 +63,7 @@ def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, s
     workflow = fill(strip_prompt_enhancer(json.loads((WORKFLOWS / "ltx25_i2v.json").read_text())),
                     json.loads((WORKFLOWS / "ltx25_i2v.slots.json").read_text()),
                     {"prompt": prompt, "image": input_name, "seconds": seconds, "width": size[0],
-                     "height": size[1], "seed": seed, "prefix": f"studio/{name}"})
+                     "height": size[1], "seed": seed, "prefix": f"studio/{name}", **({"unet": unet} if unet else {})})
     started = time.monotonic()
     try:
         with VramSampler() as vram:
