@@ -1,13 +1,17 @@
 import json
 import os
+import subprocess
 from datetime import datetime
 
 import httpx2
+import pytest
 
 from studio.claude.client import Claude
 from studio.claude.ledger import Ledger
-from studio.config import Config
-from studio.doctor import Check, check_claude_cache, check_disk, check_driver, check_private, exit_code
+from studio.config import Config, load_config
+from studio.doctor import (Check, check_claude_cache, check_disk, check_driver, check_ffmpeg, check_private,
+                           exit_code, guarded)
+from studio.media import ffmpeg
 
 
 def test_check_disk_passes_when_enough_space_is_free(tmp_path):
@@ -76,3 +80,21 @@ def test_check_private_fails_when_group_or_others_can_write(tmp_path):
     assert not check.ok and f"chmod 700 {folder}" in check.detail
     folder.chmod(0o700)
     assert check_private(folder).ok
+
+
+def test_a_check_that_raises_becomes_a_fail_line():
+    def broken():
+        raise subprocess.CalledProcessError(9, ["nvidia-smi"], stderr="NVML init\nDriver/library version mismatch\n")
+
+    assert guarded("gpu", broken) == [Check("gpu", False, "Driver/library version mismatch")]
+
+
+@pytest.mark.skipif(not ffmpeg.binary(load_config()).exists(), reason="run: uv run studio fetch-ffmpeg")
+def test_nvenc_test_encodes_are_skipped_while_the_gpu_is_busy(monkeypatch):
+    def must_not_run(cfg, encoder):
+        raise AssertionError("encoded on a busy GPU")
+
+    monkeypatch.setattr(ffmpeg, "try_encode", must_not_run)
+    encodes = [c for c in check_ffmpeg(load_config(), gpu_free=False) if c.name.startswith("encode ")]
+    assert len(encodes) == 3
+    assert all(not c.ok and c.detail == "skipped: GPU busy" for c in encodes)

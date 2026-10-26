@@ -19,3 +19,12 @@ def test_cost_prints_the_month_total_against_the_cap(tmp_path):
     assert result.exit_code == 0, result.output
     assert "2026-10: $1.00 of $40.00 cap, 1 calls" in result.output
     assert "_doctor" in result.output
+
+
+def test_doctor_prints_every_check_even_when_one_of_them_raises(tmp_path):
+    cfg_file = tmp_path / "studio.yaml"
+    cfg_file.write_text(f"data_root: {tmp_path}\ndisk:\n  docker_root: {tmp_path / 'missing'}\n")
+    result = CliRunner().invoke(app, ["--config", str(cfg_file), "doctor"])
+    assert result.exit_code == 1
+    assert f"FAIL  disk {tmp_path / 'missing'}" in result.output
+    assert "nvidia driver" in result.output and "ffmpeg" in result.output

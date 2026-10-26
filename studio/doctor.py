@@ -54,7 +54,8 @@ def check_gpu(cfg: Config) -> list[Check]:
     return [check_driver(driver), Check("gpu idle", verdict.ok, detail)]
 
 
-def check_ffmpeg(cfg: Config) -> list[Check]:
+def check_ffmpeg(cfg: Config, gpu_free: bool = True) -> list[Check]:
+    """gpu_free=False skips the NVENC test encodes: they open CUDA contexts, which must wait for an idle GPU."""
     if not ffmpeg.binary(cfg).exists():
         return [Check("ffmpeg", False, f"missing {ffmpeg.binary(cfg)}; run: uv run studio fetch-ffmpeg")]
     checks = [Check("ffmpeg", "n8.1" in ffmpeg.version(cfg), ffmpeg.version(cfg))]
@@ -66,6 +67,9 @@ def check_ffmpeg(cfg: Config) -> list[Check]:
     checks.append(Check("ffmpeg filters", not missing, "missing " + ", ".join(missing) if missing
                         else ", ".join(FILTERS)))
     for encoder in NVENC:
+        if not gpu_free:
+            checks.append(Check(f"encode {encoder}", False, "skipped: GPU busy"))
+            continue
         ok, error = ffmpeg.try_encode(cfg, encoder)
         checks.append(Check(f"encode {encoder}", ok, "1 s test pattern" if ok else error))
     return checks
@@ -84,13 +88,34 @@ def check_claude_cache(claude) -> list[Check]:
             Check("claude cache", read > 0, f"first call wrote {written} tokens, second read {read}")]
 
 
-def run_doctor(cfg: Config, with_claude: bool = False) -> list[Check]:
-    checks = check_gpu(cfg)
-    checks += [check_private(cfg.data_root), check_private(cfg.bin_dir)]
-    checks.append(check_disk(Path.home(), cfg.disk.home_min_free_gb))
-    checks.append(check_disk(cfg.disk.docker_root, cfg.disk.docker_min_free_gb))
-    checks += check_ffmpeg(cfg)
+def _error_line(error: Exception) -> str:
+    if isinstance(error, subprocess.CalledProcessError) and error.stderr:
+        lines = [line for line in str(error.stderr).splitlines() if line.strip()]
+        if lines:
+            return lines[-1].strip()
+    return f"{type(error).__name__}: {error}"
+
+
+def guarded(name: str, check) -> list[Check]:
+    """Runs one check; an exception becomes a FAIL line instead of ending the run."""
+    try:
+        result = check()
+    except Exception as error:
+        return [Check(name, False, _error_line(error))]
+    return result if isinstance(result, list) else [result]
+
+
+def run_doctor(cfg: Config, with_claude: bool = False):
+    """Yields each check as it finishes, so a failure late in the run still shows everything before it."""
+    gpu = guarded("gpu", lambda: check_gpu(cfg))
+    yield from gpu
+    gpu_free = any(c.name == "gpu idle" and c.ok for c in gpu)
+    for path in (cfg.data_root, cfg.bin_dir):
+        yield from guarded(f"private {path}", lambda path=path: check_private(path))
+    yield from guarded(f"disk {Path.home()}", lambda: check_disk(Path.home(), cfg.disk.home_min_free_gb))
+    yield from guarded(f"disk {cfg.disk.docker_root}",
+                       lambda: check_disk(cfg.disk.docker_root, cfg.disk.docker_min_free_gb))
+    yield from guarded("ffmpeg", lambda: check_ffmpeg(cfg, gpu_free))
     if with_claude:
         from studio.claude.client import Claude
-        checks += check_claude_cache(Claude(cfg))
-    return checks
+        yield from guarded("claude", lambda: check_claude_cache(Claude(cfg)))

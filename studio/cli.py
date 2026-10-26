@@ -9,7 +9,9 @@ from studio.doctor import exit_code, run_doctor
 from studio.media import ffmpeg
 from studio.media.smoke import TARGET_LUFS, smoke_mux
 
-app = typer.Typer(no_args_is_help=True, add_completion=False, help="Short films from a written story.")
+# Tracebacks must never print locals: the Claude client holds the API key.
+app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False,
+                  help="Short films from a written story.")
 _state: dict[str, Config] = {}
 
 
@@ -22,9 +24,10 @@ def main(config: Path = typer.Option(None, "--config", help="Config file; defaul
 def doctor(claude: bool = typer.Option(False, "--claude",
                                        help="Also check the Claude API key and prompt cache (a few cents).")):
     """Check the GPU, disks, FFmpeg and, with --claude, the Claude API."""
-    checks = run_doctor(_state["cfg"], with_claude=claude)
-    for c in checks:
+    checks = []
+    for c in run_doctor(_state["cfg"], with_claude=claude):
         typer.echo(f"{'PASS' if c.ok else 'FAIL'}  {c.name:<22} {c.detail}")
+        checks.append(c)
     raise typer.Exit(exit_code(checks))
 
 
