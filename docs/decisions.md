@@ -39,3 +39,25 @@
   Its model, Gemma 4 E2B, is downloaded only so the template runs unchanged in the web UI.
 - ComfyUI reuses a node's result while its inputs are unchanged. A clip taken whole from an earlier run counts as a
   failure; a repeat of the same picture, prompt and seed needs a new seed or a restart.
+
+## 2026-10-26: scene flow
+
+- One command pair turns photos, other pictures and a prompt into stills and then clips: `studio scene stills` and
+  `studio scene clips`. Stills come first and the user picks which to animate: likeness varies by seed and cannot
+  be scored automatically.
+- Stills: FLUX 3 Image Klein distilled in BF16 with BFL's prompt upsampler, as BFL's multi-image workflow (16 steps,
+  no guidance, references at 1 MP). The upsampler sees the references; Claude does not.
+- References: the person in most of the pictures, found with YuNet and grouped with SFace (average linkage at
+  cosine 0.363, never two faces of one picture), gives up to 6 face crops ranked by sharpness, size and angle;
+  near-copies are skipped and other faces blurred. Pictures without people go in whole, padded to a square only for
+  the upsampler, whose image batch crops everything to the first image's square. At most 10 references.
+- Face recognition runs only on the input pictures. The FLUX license forbids biometric processing of the model and
+  its outputs, so generated images are never scored for likeness.
+- Claude writes the still request and the motion prompt from the user's words (route scene_prompts, structured
+  output). It gets the prompt, the number of photos of the person and the file names of the other pictures, never
+  an image. Its instructions hold what the first space scene taught: references by number, a large visible face,
+  light matching the lit references, a real-photo look; in motion a still camera, small drift, the face toward the
+  camera, the first frame's expression held, no speech, no named facial movements.
+- Clips: LTX-2.5 distilled int8, 5 s at 1280x704, as make-video.
+- Each run removes its copies from ComfyUI's input and output folders, without following links.
+- The face models sit in `models/faces`, outside ComfyUI's model folders.
