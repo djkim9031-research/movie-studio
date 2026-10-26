@@ -124,3 +124,27 @@ def test_fetch_counts_only_the_files_still_missing(tmp_path, monkeypatch):
     os.chmod(tmp_path / "secrets" / "hf.env", 0o600)
     monkeypatch.setattr(models, "hf_hub_download", lambda **kw: str(root / kw["filename"]))
     assert models.fetch(cfg, "demo") == []
+
+
+def test_a_file_with_a_destination_lands_there_and_is_verified_there(tmp_path, monkeypatch):
+    payload = b"wan"
+    entry = {"path": "split_files/vae/wan.safetensors", "dest": "vae/wan.safetensors", "size": len(payload),
+             "sha256": hashlib.sha256(payload).hexdigest()}
+    cfg = make_config(tmp_path, [entry])
+    (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "hf.env").write_text("HF_TOKEN=hf_test\n")
+    os.chmod(tmp_path / "secrets" / "hf.env", 0o600)
+
+    def fake_download(**kwargs):
+        target = kwargs["local_dir"] / kwargs["filename"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(payload)
+        return str(target)
+
+    monkeypatch.setattr(models, "hf_hub_download", fake_download)
+    monkeypatch.setattr(models.shutil, "disk_usage", lambda path: SimpleNamespace(total=10**13, used=0, free=10**13))
+    assert models.fetch(cfg, "demo") == []
+    root = tmp_path / "models" / "comfy"
+    assert (root / "vae" / "wan.safetensors").read_bytes() == payload
+    assert not (root / "split_files" / "vae" / "wan.safetensors").exists()
+    assert models.present(cfg, "demo") == [] and models.verify(cfg, "demo") == []

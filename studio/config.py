@@ -70,9 +70,14 @@ class ComfyConfig(BaseModel):
 
 
 class ModelFile(BaseModel):
-    path: str
+    path: str  # in the repo
     size: int
     sha256: str
+    dest: str | None = None  # under the set's root, when the repo's layout differs from ComfyUI's model folders
+
+    @property
+    def target(self) -> str:
+        return self.dest or self.path
 
 
 class ModelSet(BaseModel):

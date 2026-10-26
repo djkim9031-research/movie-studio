@@ -9,7 +9,7 @@ import anthropic
 import typer
 from pydantic import ValidationError
 
-from studio import identity, models, provenance, refs, scene
+from studio import bench, identity, models, provenance, refs, scene
 from studio.claude.client import Claude, CredentialsError, Refused
 from studio.claude.ledger import BudgetExceeded, Ledger, summarize
 from studio.config import Config, load_config
@@ -36,6 +36,8 @@ app.add_typer(scene_app, name="scene")
 identity_app = typer.Typer(no_args_is_help=True, help="Face profiles of real people and identity scores, on this "
                                                          "machine only.")
 app.add_typer(identity_app, name="identity")
+bench_app = typer.Typer(no_args_is_help=True, help="Fixed benches that measure variants against each other.")
+app.add_typer(bench_app, name="bench")
 RENDER_TEST_PROMPT = ("A slow push-in toward a misty pond at morning. Fog drifts low across the water, willow "
                       "leaves and tall meadow grass sway in a light breeze, soft sunlight. Quiet outdoor ambience: "
                       "light wind and distant birds.")
@@ -366,3 +368,40 @@ def identity_score(files: list[Path] = typer.Argument(..., help="Images or clips
                        f"of {person}'s real pairs, face {frame.px:.0f} px, yaw {frame.yaw:.2f}")
     if refused:
         raise typer.Exit(1)
+
+
+@bench_app.command("identity")
+def bench_identity(person: str = typer.Option(..., help="Alias whose real photos start the clips."),
+                   variant: str = typer.Option("ltx-int8-2stage", help=f"One of: {', '.join(bench.VARIANTS)}."),
+                   name: str = typer.Option(None, help="Run name; default the time and the variant."),
+                   count: int = typer.Option(6, min=1, max=12, help="How many start photos."),
+                   keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
+    """Render every bench cell with one variant and score each clip against the person's profile."""
+    cfg = _state["cfg"]
+    if variant not in bench.VARIANTS:
+        typer.echo(f"FAIL  unknown variant {variant}; known: {', '.join(bench.VARIANTS)}")
+        raise typer.Exit(1)
+    _models_or_exit(cfg, ["face-detect", "face-id", *bench.VARIANTS[variant]])
+    run_name = scene.clean_name(name or f"{datetime.now():%Y%m%d-%H%M}-{variant}")
+    run_dir = cfg.data_root / "bench" / run_name
+    if (run_dir / "results.json").exists():
+        typer.echo(f"FAIL  bench run {run_name} exists in {run_dir}; pick another name")
+        raise typer.Exit(1)
+    try:
+        with _comfy_session(cfg, keep_up):
+            results = bench.run(cfg, alias=person, variant=variant, tools=face_tools(cfg),
+                                run_dir=private_dir(run_dir), echo=typer.echo, count=count)
+    except (ValueError, FileNotFoundError, RuntimeError, TimeoutError) as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    for motion in dict.fromkeys(c["motion"] for c in results["cells"]):
+        cells = [c for c in results["cells"] if c["motion"] == motion and c["median"] is not None]
+        if not cells:
+            typer.echo(f"{motion:<7} no scorable face")
+            continue
+        mean = sum(c["median"] for c in cells) / len(cells)
+        low = sum(c["mid_min"] for c in cells) / len(cells)
+        cover = sum(c["coverage"] for c in cells) / len(cells)
+        typer.echo(f"{motion:<7} median {mean:.3f} min {low:.3f} dips {sum(c['dips'] for c in cells)} "
+                   f"coverage {cover:.0%} ({len(cells)} cells)")
+    typer.echo(f"PASS  {len(results['cells'])} clips; review: {run_dir / 'review.html'}")

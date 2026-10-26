@@ -174,6 +174,20 @@ def crop_window(shape, face: Face, others: list[Face]) -> tuple[int, int, int, i
     return window
 
 
+def face_frame(shape, face: Face, aspect: float = 16 / 9, face_frac: float = 0.35,
+               eyes_at: float = 0.4) -> tuple[int, int, int, int]:
+    """A window of `aspect` around the face: the face `face_frac` of its height when the picture allows (otherwise
+    as wide as the picture), the eyes `eyes_at` of the way down, the window inside the picture."""
+    H, W = shape[:2]
+    x, y, w, h = face.box
+    height = min(h / face_frac, H, W / aspect)
+    width = height * aspect
+    eyes_y = float((face.landmarks[0][1] + face.landmarks[1][1]) / 2)
+    x0 = min(max(x + w / 2 - width / 2, 0), W - width)
+    y0 = min(max(eyes_y - eyes_at * height, 0), H - height)
+    return round(x0), round(y0), round(x0 + width), round(y0 + height)
+
+
 def square_crop(bgr: np.ndarray, face: Face, others: list[Face]) -> np.ndarray:
     x0, y0, x1, y1 = crop_window(bgr.shape, face, others)
     crop = bgr[y0:y1, x0:x1].copy()

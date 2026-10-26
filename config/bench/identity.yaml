@@ -1,0 +1,16 @@
+# The identity bench: the same motions, prompts and seeds for every variant, so variants are compared cell by cell.
+# Start frames are 16:9 crops framed on the face of the person's best real photos; nothing here names anyone.
+seconds: 5
+seeds: [1001]
+motions:
+  still: >-
+    The person in the picture looks into the camera with a thin, closed-mouth smile, breathing calmly, and blinks
+    once. The head and the camera stay still and the background does not change. Quiet room tone, no speech.
+  turn: >-
+    The person in the picture faces the camera, slowly turns their head about 30 degrees to their left, holds for a
+    moment, then slowly turns back to face the camera, keeping a calm, closed-mouth expression. The camera stays
+    still. Quiet room tone, no speech.
+  float: >-
+    The person in the picture sways gently, head and shoulders tilting a little from side to side as if floating,
+    the face toward the camera with a calm, closed-mouth expression. The camera stays still. Quiet room tone, no
+    speech.

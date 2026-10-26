@@ -106,3 +106,11 @@ def test_score_clip_reads_every_frame_with_its_time(tmp_path):
     result = identity.score_clip(profile, tools, clip, pinned=[0])
     assert len(result.frames) == 24 and result.frames[12].t == pytest.approx(0.5)
     assert result.summary.median == pytest.approx(1.0, abs=1e-5)
+
+
+def test_a_profile_without_one_photo_scores_that_photo_as_unseen(cfg):
+    _, tools = make_photos(cfg)
+    profile = identity.build_profile(cfg, "me", tools)
+    rest = profile.without("me1.jpg")
+    assert rest.sources == ["me0.jpg", "me2.jpg", "me3.jpg"] and len(rest.genuine) == 3
+    assert not np.allclose(rest.centroid, profile.centroid)

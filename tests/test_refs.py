@@ -169,3 +169,21 @@ def test_prepare_reads_only_the_pictures_it_uses_a_second_time(tmp_path, monkeyp
     monkeypatch.setattr(refs, "load", lambda path: loads.append(path.name) or real(path))
     refs.prepare(pics, tmp_path / "refs", tools)
     assert sorted(loads) == ["other.jpg", "p1.jpg", "p1.jpg", "saturn.png", "saturn.png"]
+
+
+def test_face_frame_is_16_9_around_the_face_with_the_eyes_high_in_frame():
+    portrait = (4032, 3024, 3)
+    me = face(1100, 1400, 900, ME)
+    x0, y0, x1, y1 = refs.face_frame(portrait, me)
+    assert (x1 - x0) / (y1 - y0) == pytest.approx(16 / 9, rel=0.01)
+    assert x0 >= 0 and y0 >= 0 and x1 <= 3024 and y1 <= 4032
+    eyes_y = 1400 + 0.4 * 900
+    assert 0.3 < (eyes_y - y0) / (y1 - y0) < 0.5
+    assert x0 <= 1100 and x1 >= 2000
+
+
+def test_face_frame_widens_to_a_medium_shot_when_the_photo_allows():
+    landscape = (3000, 6000, 3)
+    me = face(2800, 1000, 400, ME)
+    x0, y0, x1, y1 = refs.face_frame(landscape, me, face_frac=0.3)
+    assert 400 / (y1 - y0) == pytest.approx(0.3, rel=0.02)

@@ -52,6 +52,15 @@ class Profile:
     def genuine_median(self) -> float:
         return float(np.median(self.genuine))
 
+    def without(self, source: str) -> "Profile":
+        """The profile without one photo, so that photo can be scored as unseen."""
+        keep = [i for i, s in enumerate(self.sources) if s != source]
+        embeddings = self.embeddings[keep]
+        sims = embeddings @ embeddings.T
+        return Profile(alias=self.alias, scorer=self.scorer, embeddings=embeddings,
+                       sources=[self.sources[i] for i in keep],
+                       genuine=np.sort(sims[np.triu_indices(len(keep), 1)]), yaws=[self.yaws[i] for i in keep])
+
 
 @dataclass
 class Frame:
