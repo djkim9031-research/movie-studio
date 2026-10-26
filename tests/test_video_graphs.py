@@ -97,3 +97,25 @@ def test_render_graph_refuses_a_placeholder_without_an_image(tmp_path):
     g = vg.ltx_single(prompt="p", first="START", size=(1280, 704), seconds=5, seed=3, unet="u", prefix="x")
     with pytest.raises(ValueError, match="START"):
         vg.render_graph(cfg, g, {}, name="x", dest=tmp_path / "c.mp4")
+
+
+def test_render_graph_also_takes_an_image_graph(tmp_path, monkeypatch):
+    from studio import keyframes
+    cfg = Config.model_validate({"data_root": str(tmp_path)})
+
+    class ImageComfy:
+        def run(self, workflow, timeout_s):
+            out = tmp_path / "comfy-io" / "output" / "kf"
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "k_00001_.png").write_bytes(b"png")
+            save = next(k for k, n in workflow.items() if n["class_type"] == "SaveImage")
+            return {"outputs": {save: {"images": [{"filename": "k_00001_.png", "subfolder": "kf", "type": "output"}]}}}
+
+    monkeypatch.setattr("studio.gpu.runtime.client", lambda c: ImageComfy())
+    monkeypatch.setattr("studio.video_graphs.VramSampler", vg.NoSampler)
+    ref = tmp_path / "ref.png"
+    ref.write_bytes(b"ref")
+    g = keyframes.flux2_klein(prompt="p", refs=["R1"], size=(1920, 1088), seed=1, prefix="kf/k")
+    dest = tmp_path / "still.png"
+    vg.render_graph(cfg, g, {"R1": ref}, name="k", dest=dest)
+    assert dest.read_bytes() == b"png" and list((tmp_path / "comfy-io" / "output" / "kf").iterdir()) == []

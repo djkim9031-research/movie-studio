@@ -150,8 +150,8 @@ class Rendered:
 
 def render_graph(cfg: Config, graph: dict, images: dict[str, Path], *, name: str, dest: Path,
                  timeout_s: float = 3600) -> Rendered:
-    """Copies `images` in for the LoadImage placeholders, runs the graph, copies its video out to `dest`, and leaves
-    nothing of this run in ComfyUI's folders."""
+    """Copies `images` in for the LoadImage placeholders, runs the graph, copies its video or image out to `dest`,
+    and leaves nothing of this run in ComfyUI's folders."""
     loads = [node for node in graph.values() if node["class_type"] == "LoadImage"]
     missing = [node["inputs"]["image"] for node in loads if node["inputs"]["image"] not in images]
     if missing:
@@ -170,14 +170,14 @@ def render_graph(cfg: Config, graph: dict, images: dict[str, Path], *, name: str
     finally:
         for file_name in copied:
             remove_in(cfg.comfy_io_dir, ["input", file_name])
-    save = next(k for k, n in graph.items() if n["class_type"] == "SaveVideo")
+    save = next(k for k, n in graph.items() if n["class_type"] in ("SaveVideo", "SaveImage"))
     items = entry.get("outputs", {}).get(save, {}).get("images", [])
     parts = [["output", *Path(i.get("subfolder", "")).parts, i["filename"]] for i in items]
     try:
         if save in cached_nodes(entry):
-            raise RenderError("ComfyUI took this clip from an earlier run; use another seed")
+            raise RenderError("ComfyUI took this result from an earlier run; use another seed")
         if not parts:
-            raise RenderError("the run finished without a video")
+            raise RenderError("the run finished without an output")
         try:
             copy_out(cfg.comfy_io_dir, parts[0], dest)
         except (ValueError, OSError) as error:
