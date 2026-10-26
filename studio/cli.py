@@ -12,7 +12,7 @@ from studio.gpu import runtime
 from studio.gpu.comfy import output_files
 from studio.gpu.preflight import run_preflight
 from studio.gpu.vram import VramSampler
-from studio.workflow import fill, ltx_frames
+from studio.workflow import fill, strip_prompt_enhancer
 from studio.claude.ledger import Ledger, summarize
 from studio.config import Config, load_config
 from studio.doctor import exit_code, run_doctor
@@ -139,7 +139,7 @@ def gpu_status():
 
 
 @app.command("render-test")
-def render_test(seconds: float = typer.Option(5.0, help="Clip length."),
+def render_test(seconds: int = typer.Option(5, help="Clip length in whole seconds (24 fps gives 8n+1 frames)."),
                 seed: int = typer.Option(42, help="Noise seed."),
                 still: Path = typer.Option(None, help="Start frame; default projects/_tests/still.png."),
                 prompt: str = typer.Option(RENDER_TEST_PROMPT, help="What happens in the clip.")):
@@ -161,9 +161,9 @@ def render_test(seconds: float = typer.Option(5.0, help="Clip length."),
         typer.echo(f"FAIL  no start frame at {still}")
         raise typer.Exit(1)
     shutil.copyfile(still, cfg.comfy_io_dir / "input" / "render_test.png")
-    workflow = fill(json.loads(template_path.read_text()), json.loads(slots_path.read_text()),
-                    {"prompt": prompt, "image": "render_test.png", "frames": ltx_frames(seconds), "seed": seed,
-                     "prefix": "studio/render_test"})
+    workflow = fill(strip_prompt_enhancer(json.loads(template_path.read_text())), json.loads(slots_path.read_text()),
+                    {"prompt": prompt, "image": "render_test.png", "seconds": seconds, "width": 1280, "height": 704,
+                     "seed": seed, "prefix": "studio/render_test"})
     started = time.monotonic()
     with VramSampler() as vram:
         entry = runtime.client(cfg).run(workflow, timeout_s=1800)

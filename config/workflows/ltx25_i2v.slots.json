@@ -1,0 +1,9 @@
+{
+  "prompt": "398:376.value",
+  "image": "395.image",
+  "seconds": "398:362.value",
+  "width": "398:372.value",
+  "height": "398:360.value",
+  "seed": "398:339.noise_seed",
+  "prefix": "75.filename_prefix"
+}
