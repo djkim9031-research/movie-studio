@@ -1,3 +1,4 @@
+import pytest
 import yaml
 from typer.testing import CliRunner
 
@@ -83,3 +84,62 @@ def test_bench_compare_prints_each_variant_against_the_first_and_writes_a_page(t
     assert "wan-4step-1022" in result.output and "passes screening" in result.output
     pages = list((tmp_path / "bench").glob("compare-*.html"))
     assert len(pages) == 1 and "r1/clips/p0-still.mp4" in pages[0].read_text()
+
+
+def make_run(root, name, variant, cells, media):
+    import json
+    run_dir = root / "bench" / name
+    (run_dir / "clips").mkdir(parents=True)
+    for c in cells:
+        media(run_dir / "clips" / c["clip"])
+    (run_dir / "results.json").write_text(json.dumps({"variant": variant, "profile": "d", "cells": cells}))
+    return run_dir
+
+
+def test_blind_pairs_clips_by_cell_as_frame_strips_and_pick_reports(tmp_path, monkeypatch):
+    from studio.config import load_config
+    from studio.media import ffmpeg
+    if not ffmpeg.binary(load_config()).exists():
+        pytest.skip("run: uv run studio fetch-ffmpeg")
+    cfg_file, _ = setup(tmp_path, monkeypatch)
+    real = load_config()
+    (tmp_path / "bin").symlink_to(real.bin_dir)
+
+    def clip(path):
+        ffmpeg.run(real, "-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=24:duration=5",
+                   "-pix_fmt", "yuv420p", str(path)).check_returncode()
+
+    cell = lambda start, score: {"start": start, "motion": "still", "seed": 1, "clip": f"{start}.mp4",  # noqa: E731
+                                 "median": score}
+    make_run(tmp_path, "a", "ltx-int8-2stage", [cell("p1", 0.9), cell("p2", 0.1)], clip)
+    make_run(tmp_path, "b", "wan-4step-1022", [cell("p1", 0.1), cell("p2", 0.2)], clip)
+    result = run(cfg_file, "bench", "blind", "a", "b", "--name", "ab", "--seed", "4")
+    assert result.exit_code == 0, result.output
+    page = tmp_path / "bench" / "blind" / "ab" / "page.html"
+    assert page.exists() and "ltx" not in page.read_text() and len(list(page.parent.glob("img/*.png"))) == 12
+    import json
+    key = json.loads((page.parent / "key.json").read_text())
+    letter = {o["id"]: k for g in key["groups"] for k, o in g["options"].items()}
+    result = run(cfg_file, "bench", "pick", "ab", f"1{letter['a/p1']}", "2=")
+    assert result.exit_code == 0, result.output
+    assert "ltx-int8-2stage 1" in result.output and "agree 1 of 1" in result.output
+
+
+def test_blind_keyframes_groups_each_shot_across_engines(tmp_path, monkeypatch):
+    cfg_file, _ = setup(tmp_path, monkeypatch)
+    from PIL import Image
+
+    def still(path):
+        Image.new("RGB", (32, 18)).save(path)
+
+    import json
+    for name, engine, score in [("k1", "flux3", None), ("k2", "qwen-edit", 0.4), ("k3", "klein4b", 0.1)]:
+        run_dir = tmp_path / "bench" / name
+        (run_dir / "stills").mkdir(parents=True)
+        still(run_dir / "stills" / "shot01-s1.png")
+        (run_dir / "results.json").write_text(json.dumps({"engine": engine, "cells": [
+            {"shot": 1, "seed": 1, "file": "shot01-s1.png", "score": score}]}))
+    result = run(cfg_file, "bench", "blind-keyframes", "k1", "k2", "k3", "--name", "kf")
+    assert result.exit_code == 0, result.output
+    key = json.loads((tmp_path / "bench" / "blind" / "kf" / "key.json").read_text())
+    assert len(key["groups"]) == 1 and len(key["groups"][0]["options"]) == 3

@@ -10,7 +10,7 @@ import anthropic
 import typer
 from pydantic import ValidationError
 
-from studio import bench, identity, keyframe_bench, models, provenance, refs, scene
+from studio import bench, blind, identity, keyframe_bench, models, provenance, refs, scene
 from studio.claude.client import Claude, CredentialsError, Refused
 from studio.claude.ledger import BudgetExceeded, Ledger, summarize
 from studio.config import Config, load_config
@@ -495,3 +495,92 @@ def bench_keyframes(person: str = typer.Option(..., help="Alias whose photos are
     scores = [c["score"] for c in results["cells"] if c["score"] is not None]
     summary = f"mean score {sum(scores) / len(scores):+.2f} over {len(scores)} stills" if scores else "judged by eye"
     typer.echo(f"PASS  {len(results['cells'])} stills, {summary}; review: {run_dir / 'review.html'}")
+
+
+STRIP_TIMES = (1.0, 2.5, 4.0)
+
+
+def _run_results(cfg: Config, name: str) -> tuple[Path, dict]:
+    run_dir = cfg.data_root / "bench" / scene.clean_name(name)
+    if not (run_dir / "results.json").is_file():
+        typer.echo(f"FAIL  no bench run {name} in {run_dir.parent}")
+        raise typer.Exit(1)
+    return run_dir, json.loads((run_dir / "results.json").read_text(encoding="utf-8"))
+
+
+def _blind_dir(cfg: Config, name: str | None) -> Path:
+    out = cfg.data_root / "bench" / "blind" / scene.clean_name(name or f"{datetime.now():%Y%m%d-%H%M%S}")
+    if (out / "key.json").exists():
+        typer.echo(f"FAIL  blind set {out.name} exists; pick another name")
+        raise typer.Exit(1)
+    return out
+
+
+@bench_app.command("blind")
+def bench_blind(runs: list[str] = typer.Argument(..., help="Two run names; clips are paired by cell."),
+                name: str = typer.Option(None, help="Name of the blind set; default the time."),
+                seed: int = typer.Option(None, help="Shuffle seed; random when omitted.")):
+    """A blind page of paired clips as frame strips at matched times, no labels or scores."""
+    cfg = _state["cfg"]
+    if len(runs) != 2:
+        typer.echo("FAIL  give two runs")
+        raise typer.Exit(1)
+    loaded = [(_run_results(cfg, r), r) for r in runs]
+    key = lambda c: (c["start"], c["motion"], c["seed"])  # noqa: E731
+    cells = [{key(c): c for c in data["cells"] if c.get("median") is not None} for (_, data), _ in loaded]
+    common = [k for k in cells[0] if k in cells[1]]
+    out = _blind_dir(cfg, name)
+    groups = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for k in common:
+            group = []
+            for ((run_dir, data), run_name), by_key in zip(loaded, cells):
+                cell = by_key[k]
+                frames = []
+                for t in STRIP_TIMES:
+                    frame = Path(tmp) / f"{run_name}-{cell['clip']}-{t}.png"
+                    ffmpeg.run(cfg, "-y", "-v", "error", "-ss", str(t), "-i", str(run_dir / "clips" / cell["clip"]),
+                               "-frames:v", "1", "-vf", "scale=640:-2", str(frame)).check_returncode()
+                    frames.append(frame)
+                group.append({"id": f"{run_name}/{cell['start']}", "run": data["variant"], "images": frames,
+                              "score": cell["median"]})
+            groups.append(group)
+        blind.make(groups, out, seed if seed is not None else secrets.randbelow(2**31))
+    typer.echo(f"PASS  {len(groups)} pairs; open {out / 'page.html'}, then: uv run studio bench pick {out.name} 1A 2B ...")
+
+
+@bench_app.command("blind-keyframes")
+def bench_blind_keyframes(runs: list[str] = typer.Argument(..., help="Keyframe runs, one per engine."),
+                          name: str = typer.Option(None, help="Name of the blind set; default the time."),
+                          seed: int = typer.Option(None, help="Shuffle seed; random when omitted.")):
+    """A blind page of each shot's stills across engines, no labels or scores."""
+    cfg = _state["cfg"]
+    loaded = [(_run_results(cfg, r), r) for r in runs]
+    by_shot = [{(c["shot"], c["seed"]): c for c in data["cells"]} for (_, data), _ in loaded]
+    shots = [k for k in by_shot[0] if all(k in other for other in by_shot[1:])]
+    groups = [[{"id": f"{run_name}/shot{k[0]:02d}", "run": data["engine"],
+                "images": [run_dir / "stills" / cells[k]["file"]], "score": cells[k].get("score")}
+               for ((run_dir, data), run_name), cells in zip(loaded, by_shot)] for k in shots]
+    out = _blind_dir(cfg, name)
+    blind.make(groups, out, seed if seed is not None else secrets.randbelow(2**31))
+    typer.echo(f"PASS  {len(groups)} shots; open {out / 'page.html'}, then: uv run studio bench pick {out.name} 1A 2C ...")
+
+
+@bench_app.command("pick")
+def bench_pick(name: str = typer.Argument(..., help="The blind set."),
+               picks: list[str] = typer.Argument(..., help="Group number and letter, like 1A 2B, or 3= for no pick.")):
+    """Record picks on a blind page; shows wins per variant or engine and agreement with the scores."""
+    cfg = _state["cfg"]
+    out = cfg.data_root / "bench" / "blind" / scene.clean_name(name)
+    if not (out / "key.json").is_file():
+        typer.echo(f"FAIL  no blind set {name}")
+        raise typer.Exit(1)
+    try:
+        report = blind.pick(out, picks, delta=bench.DELTA)
+    except ValueError as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    typer.echo("wins: " + ", ".join(f"{run} {count}" for run, count in report["wins"].items()))
+    scored = report["agree"] + report["disagree"]
+    typer.echo(f"scores agree {report['agree']} of {scored} picks where they differ by more than {bench.DELTA:.2f}; "
+               f"no preference {report['ties']}")
