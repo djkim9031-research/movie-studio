@@ -17,3 +17,5 @@
   rented GPUs.
 - Claude API spend is capped at $40 a month and $20 a film, enforced by the ledger before every call.
 - FFmpeg is the BtbN n8.1 static build. n9.0 and newer builds need driver 610+ for NVENC; this machine has 580.
+  The sha256 in config/studio.yaml was copied from that release's checksums.sha256 on 2026-10-26; the install
+  trusts only the pinned value.
