@@ -27,8 +27,9 @@ app.add_typer(models_app, name="models")
 gpu_app = typer.Typer(no_args_is_help=True, help="The ComfyUI container on this GPU.")
 app.add_typer(gpu_app, name="gpu")
 WORKFLOWS = Path(__file__).resolve().parent.parent / "config" / "workflows"
-RENDER_TEST_PROMPT = ("A slow push-in across the landscape. Clouds drift and the light shifts gently; grass and "
-                      "leaves move in a light wind. Quiet outdoor ambience with soft wind.")
+RENDER_TEST_PROMPT = ("A slow push-in toward a misty pond at morning. Fog drifts low across the water, willow "
+                      "leaves and tall meadow grass sway in a light breeze, soft sunlight. Quiet outdoor ambience: "
+                      "light wind and distant birds.")
 _state: dict[str, Config] = {}
 
 
