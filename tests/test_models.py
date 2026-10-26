@@ -1,5 +1,6 @@
 import hashlib
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -57,6 +58,7 @@ def test_fetch_downloads_each_file_at_the_pinned_revision_then_verifies(tmp_path
         return str(target)
 
     monkeypatch.setattr(models, "hf_hub_download", fake_download)
+    monkeypatch.setattr(models.shutil, "disk_usage", lambda path: SimpleNamespace(total=10**13, used=0, free=10**13))
     assert models.fetch(cfg, "demo") == []
     assert calls == [{"repo_id": "org/demo", "filename": "vae/a.safetensors", "revision": "abc123",
                       "local_dir": cfg.models_dir, "token": "hf_test", "endpoint": "https://huggingface.co"}]
@@ -101,3 +103,24 @@ def test_present_checks_names_and_sizes_without_reading_the_files(tmp_path, monk
     monkeypatch.setattr(models, "sha256_file", lambda path: pytest.fail("present must not hash"))
     problems = models.present(make_config(tmp_path, [good, short, missing]), "demo")
     assert problems == ["vae/b.safetensors: size 2, expected 3", "vae/d.safetensors: missing"]
+
+
+def test_fetch_refuses_a_download_that_would_go_below_the_free_disk_floor(tmp_path, monkeypatch):
+    entry = {"path": "vae/big.safetensors", "size": 50 * 10**9, "sha256": "0" * 64}
+    cfg = make_config(tmp_path, [entry])
+    monkeypatch.setattr(models.shutil, "disk_usage", lambda path: SimpleNamespace(total=10**13, used=0, free=320 * 10**9))
+    monkeypatch.setattr(models, "hf_hub_download", lambda **kw: pytest.fail("must not download"))
+    with pytest.raises(models.DiskFloor, match="270 GB"):
+        models.fetch(cfg, "demo")
+
+
+def test_fetch_counts_only_the_files_still_missing(tmp_path, monkeypatch):
+    root = tmp_path / "models" / "comfy"
+    have = file_entry(root, "vae/have.safetensors", b"aaaa")
+    cfg = make_config(tmp_path, [{**have, "size": 4}])
+    monkeypatch.setattr(models.shutil, "disk_usage", lambda path: SimpleNamespace(total=10**13, used=0, free=301 * 10**9))
+    (tmp_path / "secrets").mkdir()
+    (tmp_path / "secrets" / "hf.env").write_text("HF_TOKEN=hf_test\n")
+    os.chmod(tmp_path / "secrets" / "hf.env", 0o600)
+    monkeypatch.setattr(models, "hf_hub_download", lambda **kw: str(root / kw["filename"]))
+    assert models.fetch(cfg, "demo") == []

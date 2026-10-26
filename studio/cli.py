@@ -106,7 +106,12 @@ def models_verify(name: str):
 @models_app.command("fetch")
 def models_fetch(name: str):
     """Download a pinned model set with the Hugging Face token in secrets/hf.env, then verify it."""
-    _report_models(name, models.fetch(_state["cfg"], name))
+    try:
+        problems = models.fetch(_state["cfg"], name)
+    except models.DiskFloor as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    _report_models(name, problems)
 
 
 @gpu_app.command("build")
