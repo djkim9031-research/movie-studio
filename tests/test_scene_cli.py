@@ -30,12 +30,12 @@ def setup(tmp_path, monkeypatch):
         Image.new("RGB", size).save(dest)
         return Still(path=dest, caption="caption", elapsed_s=2.0, graph={})
 
-    def render_i2v(cfg, still, prompt, seconds, seed, size, name, dest, cleanup=False):
+    def render_clip(cfg, variant, start, prompt, seconds, seed, name, dest, size):
         dest.write_bytes(b"mp4")
         return SimpleNamespace(clip=dest, elapsed_s=27.0, peak_gib=42.7, reused_nodes=0)
 
     monkeypatch.setattr("studio.scene.render_still", render_still)
-    monkeypatch.setattr("studio.scene.render_i2v", render_i2v)
+    monkeypatch.setattr("studio.scene.render_clip", render_clip)
     monkeypatch.setattr("studio.scene.prepare_still", lambda cfg, picture, out, size: picture)
     (tmp_path / "pictures").mkdir()
     pictures = [str(write(tmp_path / "pictures" / "a.jpg", (2000, 1500))),
@@ -54,7 +54,8 @@ def test_scene_stills_then_clips(setup):
     result = CliRunner().invoke(app, ["--config", str(cfg_file), "scene", "clips", "--name", "moon", "2",
                                       "--seed", "7"])
     assert result.exit_code == 0, result.output
-    assert (scenes / "moon" / "clips" / "still2-seed7.mp4").exists() and "PASS  1 clip" in result.output
+    assert (scenes / "moon" / "clips" / "still2-seed7-ltx-int8-2stage.mp4").exists()
+    assert "PASS  1 clip" in result.output
 
 
 def test_scene_stills_names_the_missing_model_set(setup, monkeypatch):

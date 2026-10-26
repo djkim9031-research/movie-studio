@@ -299,14 +299,18 @@ def scene_clips(numbers: list[int] = typer.Argument(..., help="Still numbers to 
                 name: str = typer.Option(..., help="Scene name."),
                 seconds: int = typer.Option(5, min=1, max=10, help="Clip length in whole seconds."),
                 seed: int = typer.Option(None, help="Noise seed for every clip; random when omitted."),
+                video: str = typer.Option("ltx-int8-2stage", help=f"Video variant: {', '.join(bench.VARIANTS)}."),
                 keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
-    """LTX-2.5 clips with sound of the chosen stills, with the scene's motion prompt."""
+    """Clips of the chosen stills with the scene's motion prompt, by a bench video variant (LTX-2.5 or Wan 2.2)."""
     cfg = _state["cfg"]
-    _models_or_exit(cfg, ["ltx25-int8"])
+    if video not in bench.VARIANTS:
+        typer.echo(f"FAIL  unknown video variant {video}; known: {', '.join(bench.VARIANTS)}")
+        raise typer.Exit(1)
+    _models_or_exit(cfg, bench.VARIANTS[video]["models"])
     try:
         scene.load(cfg, name)
         made = scene.make_clips(cfg, name=name, numbers=numbers, seconds=seconds, seed=seed, echo=typer.echo,
-                                gpu=lambda: _comfy_session(cfg, keep_up))
+                                gpu=lambda: _comfy_session(cfg, keep_up), video=video)
     except SCENE_ERRORS as error:
         typer.echo(f"FAIL  {error}")
         raise typer.Exit(1)
@@ -607,3 +611,17 @@ def cast_ingest(person: str = typer.Option(..., help="Alias: the folder name und
     if report["missing"]:
         typer.echo(f"missing angles: {', '.join(report['missing'])}; film those to fill them")
     typer.echo(f"PASS  {report['kept']} images in {report['dataset']}, trigger word {report['trigger']}")
+
+
+@scene_app.command("compare")
+def scene_compare(names: list[str] = typer.Argument(..., help="Scene names, side by side in this order.")):
+    """A local page with the scenes' stills and clips side by side."""
+    cfg = _state["cfg"]
+    try:
+        page = scene.compare_page(cfg, names)
+    except scene.SceneError as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    out = cfg.projects_dir / "scenes" / f"compare-{'-'.join(scene.clean_name(n) for n in names)}.html"
+    write_private(out, page)
+    typer.echo(f"PASS  page: {out}")

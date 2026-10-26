@@ -9,12 +9,13 @@ import secrets
 import tempfile
 from pathlib import Path
 
-from studio import refs, scene_prompts
+from studio import bench, refs, scene_prompts
+from studio.bench import render as render_clip
 from studio.config import Config
 from studio.fs import private_dir, write_private
 from studio.render import LANDSCAPE as CLIP_LANDSCAPE
 from studio.render import PORTRAIT as CLIP_PORTRAIT
-from studio.render import prepare_still, render_i2v
+from studio.render import prepare_still
 from studio.stills import LANDSCAPE, PORTRAIT, render_still
 
 
@@ -104,8 +105,11 @@ def make_stills(cfg: Config, *, name: str, prompt: str, pictures: list[Path], co
 
 
 def make_clips(cfg: Config, *, name: str, numbers: list[int], seconds: int, seed: int | None, echo,
-               gpu=contextlib.nullcontext) -> dict:
-    """One clip per chosen still, with the scene's motion prompt; one seed for all, random when None."""
+               gpu=contextlib.nullcontext, video: str = "ltx-int8-2stage") -> dict:
+    """One clip per chosen still with the scene's motion prompt, rendered by a bench video variant; one seed for all,
+    random when None."""
+    if video not in bench.VARIANTS:
+        raise SceneError(f"unknown video variant {video}; known: {', '.join(bench.VARIANTS)}")
     folder, data = load(cfg, name)
     stills = {s["n"]: s for s in data["stills"]}
     for n in numbers:
@@ -116,16 +120,43 @@ def make_clips(cfg: Config, *, name: str, numbers: list[int], seconds: int, seed
     with gpu():
         for n in numbers:
             clip_seed = seed if seed is not None else secrets.randbelow(2**31)
-            dest = clips_dir / f"still{n}-seed{clip_seed}.mp4"
+            dest = clips_dir / f"still{n}-seed{clip_seed}-{video}.mp4"
             with tempfile.TemporaryDirectory() as tmp:
                 start = prepare_still(cfg, folder / stills[n]["file"], Path(tmp) / "start.png", size)
-                result = render_i2v(cfg, start, data["motion_prompt"], seconds, clip_seed, size,
-                                    f"{data['name']}_still{n}", dest, cleanup=True)
-            data["clips"].append({"still": n, "seed": clip_seed, "seconds": seconds,
-                                  "file": f"clips/still{n}-seed{clip_seed}.mp4", "render_s": round(result.elapsed_s, 1)})
+                result = render_clip(cfg, video, start, data["motion_prompt"], seconds, clip_seed,
+                                     f"{data['name']}_still{n}", dest, size=size)
+            data["clips"].append({"still": n, "seed": clip_seed, "seconds": seconds, "video": video,
+                                  "file": f"clips/{dest.name}", "render_s": round(result.elapsed_s, 1)})
             _save(folder, data)
-            echo(f"clip of still {n}  seed {clip_seed}, {result.elapsed_s:.1f} s -> {dest}")
+            echo(f"clip of still {n} ({video})  seed {clip_seed}, {result.elapsed_s:.1f} s -> {dest}")
     return data
+
+
+def compare_page(cfg: Config, names: list[str]) -> str:
+    """Scenes side by side, stills and clips, for a before and after look. It shows real people: never published."""
+    e = html.escape
+    columns = []
+    for name in names:
+        folder, data = load(cfg, name)
+        stills = "".join(f'<img src="{e(folder.name)}/{e(s["file"])}" alt="still {s["n"]}">' for s in data["stills"])
+        clips = "".join(f'<video src="{e(folder.name)}/{e(c["file"])}" controls loop playsinline preload="metadata">'
+                        f'</video><p class="meta">still {c["still"]}, {e(c.get("video", "ltx-int8-2stage"))}, '
+                        f'{c["seconds"]} s</p>' for c in data["clips"])
+        columns.append(f'<section><h2>{e(data["name"])}</h2><p>{e(data["prompt"])}</p>{stills}{clips}</section>')
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scene comparison</title>
+<style>
+  :root {{ color-scheme: dark; --bg: #0b0d12; --card: #161a22; --text: #e8eaf0; --muted: #9aa3b5; }}
+  body {{ margin: 0; padding: 24px 16px 48px; background: var(--bg); color: var(--text);
+         font: 14px/1.5 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }}
+  main {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr)); gap: 16px; }}
+  section {{ background: var(--card); border-radius: 10px; padding: 12px; }}
+  img, video {{ display: block; width: 100%; height: auto; border-radius: 6px; margin-top: 8px; background: #000; }}
+  p {{ color: var(--muted); }} .meta {{ font-size: 12px; margin: 4px 0 0; }}
+</style></head>
+<body><h1>Before and after</h1><main>{"".join(columns)}</main></body></html>
+"""
 
 
 def review_page(data: dict) -> str:
@@ -134,7 +165,7 @@ def review_page(data: dict) -> str:
     cards = []
     for s in data["stills"]:
         clips = "".join(f'<video src="{e(c["file"])}" controls loop playsinline preload="metadata"></video>'
-                        f'<p class="meta">seed {c["seed"]}, {c["seconds"]} s</p>'
+                        f'<p class="meta">{e(c.get("video", "ltx-int8-2stage"))}, seed {c["seed"]}, {c["seconds"]} s</p>'
                         for c in data["clips"] if c["still"] == s["n"])
         cards.append(f'<figure><figcaption>Still {s["n"]}</figcaption><img src="{e(s["file"])}" alt="Still {s["n"]}">'
                      f'{clips}<p class="meta">seed {s["seed"]}</p></figure>')

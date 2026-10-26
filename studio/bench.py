@@ -50,23 +50,24 @@ def make_start(cfg: Config, photo: Path, face: refs.Face, dest: Path) -> Path:
     return dest
 
 
-def render(cfg: Config, variant: str, start: Path, prompt: str, seconds: int, seed: int, name: str, dest: Path):
+def render(cfg: Config, variant: str, start: Path, prompt: str, seconds: int, seed: int, name: str, dest: Path,
+           size: tuple[int, int] = SIZE):
     """LTX two-stage runs the exported template (int8 as today, or the BF16 transformer); the other variants run
     graphs built from ComfyUI's single-stage LTX and Wan 2.2 templates."""
     if variant == "ltx-int8-2stage":
-        return render_i2v(cfg, start, prompt, seconds, seed, SIZE, name, dest, cleanup=True)
+        return render_i2v(cfg, start, prompt, seconds, seed, size, name, dest, cleanup=True)
     if variant == "ltx-bf16-2stage":
-        return render_i2v(cfg, start, prompt, seconds, seed, SIZE, name, dest, cleanup=True, unet=LTX_BF16)
+        return render_i2v(cfg, start, prompt, seconds, seed, size, name, dest, cleanup=True, unet=LTX_BF16)
     prefix = f"bench/{name}"
     if variant in ("ltx-bf16-1stage", "ltx-bf16-1stage-loop"):
         last = "START" if variant.endswith("loop") else None
-        graph = ltx_single(prompt=prompt, first="START", last=last, size=SIZE, seconds=seconds, seed=seed,
+        graph = ltx_single(prompt=prompt, first="START", last=last, size=size, seconds=seconds, seed=seed,
                            unet=LTX_BF16, prefix=prefix)
     elif variant == "wan-4step-1022":
-        graph = wan_i2v(prompt=prompt, start="START", size=SIZE, seconds=seconds, seed=seed, steps=4, cfg=1.0,
+        graph = wan_i2v(prompt=prompt, start="START", size=size, seconds=seconds, seed=seed, steps=4, cfg=1.0,
                         split=2, loras=WAN_LORAS_1022, prefix=prefix)
     elif variant == "wan-20step":
-        graph = wan_i2v(prompt=prompt, start="START", size=SIZE, seconds=seconds, seed=seed, steps=20, cfg=3.5,
+        graph = wan_i2v(prompt=prompt, start="START", size=size, seconds=seconds, seed=seed, steps=20, cfg=3.5,
                         split=10, loras=None, prefix=prefix)
     else:
         raise ValueError(f"unknown variant {variant}; known: {', '.join(VARIANTS)}")

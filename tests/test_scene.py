@@ -91,22 +91,22 @@ def test_make_clips_animates_the_chosen_stills_with_the_saved_motion_prompt(cfg,
                       portrait=False, claude=FakeClaude(), tools=TOOLS, echo=print)
     calls = []
 
-    def render_i2v(cfg, still, prompt, seconds, seed, size, name, dest, cleanup=False):
-        calls.append(dict(still=still, prompt=prompt, seconds=seconds, seed=seed, size=size, name=name,
-                          cleanup=cleanup))
+    def render_clip(cfg, variant, start, prompt, seconds, seed, name, dest, size):
+        calls.append(dict(variant=variant, still=start, prompt=prompt, seconds=seconds, seed=seed, size=size,
+                          name=name))
         dest.write_bytes(b"mp4")
         return SimpleNamespace(clip=dest, elapsed_s=27.0, peak_gib=42.7, reused_nodes=0)
 
-    monkeypatch.setattr("studio.scene.render_i2v", render_i2v)
+    monkeypatch.setattr("studio.scene.render_clip", render_clip)
     monkeypatch.setattr("studio.scene.prepare_still", lambda cfg, picture, out, size: picture)
-    scene.make_clips(cfg, name="moon", numbers=[2], seconds=5, seed=7, echo=print)
+    scene.make_clips(cfg, name="moon", numbers=[2], seconds=5, seed=7, echo=print, video="wan-4step-1022")
     folder = cfg.projects_dir / "scenes" / "moon"
-    assert calls == [dict(still=folder / "stills" / "still2.png", prompt=REPLY["motion_prompt"], seconds=5, seed=7,
-                          size=(1280, 704), name="moon_still2", cleanup=True)]
+    assert calls == [dict(variant="wan-4step-1022", still=folder / "stills" / "still2.png",
+                          prompt=REPLY["motion_prompt"], seconds=5, seed=7, size=(1280, 704), name="moon_still2")]
     data = json.loads((folder / "scene.json").read_text())
-    assert data["clips"] == [{"still": 2, "seed": 7, "seconds": 5, "file": "clips/still2-seed7.mp4",
-                              "render_s": 27.0}]
-    assert "clips/still2-seed7.mp4" in (folder / "review.html").read_text()
+    assert data["clips"] == [{"still": 2, "seed": 7, "seconds": 5, "video": "wan-4step-1022",
+                              "file": "clips/still2-seed7-wan-4step-1022.mp4", "render_s": 27.0}]
+    assert "clips/still2-seed7-wan-4step-1022.mp4" in (folder / "review.html").read_text()
 
 
 def test_make_clips_refuses_a_still_that_does_not_exist(cfg, tmp_path, fake_stills):
@@ -147,3 +147,11 @@ def test_make_stills_takes_a_folder_of_pictures(cfg, tmp_path, fake_stills):
     assert sorted(p.name for p in refs_dir.iterdir()) == ["extra1.png", "extra1_square.png", "person1.png",
                                                           "person2.png"]
     assert fake_stills and not any("readme.txt" in line for line in lines)
+
+
+def test_compare_page_puts_two_scenes_side_by_side(cfg, tmp_path, fake_stills):
+    for name in ("chosun", "chosun-v2"):
+        scene.make_stills(cfg, name=name, prompt="x", pictures=pictures(tmp_path), count=1, portrait=False,
+                          claude=FakeClaude(), tools=TOOLS, echo=print)
+    page = scene.compare_page(cfg, ["chosun", "chosun-v2"])
+    assert "chosun/stills/still1.png" in page and "chosun-v2/stills/still1.png" in page
