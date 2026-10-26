@@ -1,0 +1,24 @@
+# The keyframe bake-off: the same shot prompts and seeds for every engine; each prompt follows "Create a photograph of
+# the person shown in images 1-N (all N show the same person)". Angles, shot sizes and light vary; nothing names anyone.
+seeds: [2001]
+prompts:
+  - "in a close-up from the front, a neutral expression, soft window light from the left, a plain light wall behind."
+  - "in a medium shot at a three-quarter angle from the left, sitting at a cafe table by the window in afternoon light."
+  - "in a medium shot at a three-quarter angle from the right, walking along a city sidewalk on an overcast day."
+  - "in a close-up profile from the left, looking out at the ocean at sunset, warm backlight on the hair."
+  - "in a full-body shot from the front, standing on the grass of a park at midday."
+  - "in a medium close-up from the front, laughing, warm lamp light in a living room at night."
+  - "in a wide shot from behind and a little to the side, looking at misty mountains in the morning."
+  - "in a medium shot from the front, reading a book in a quiet library under soft overhead light."
+  - "in a close-up at a three-quarter angle from the left, under an umbrella in the rain at night, neon reflections."
+  - "in a medium shot in profile from the right, cooking at a kitchen counter in daylight from a window."
+  - "in a full-body shot walking toward the camera along a beach at sunset."
+  - "in a medium close-up from a low angle at a three-quarter view from the right, on a city rooftop at dusk."
+  - "in a medium shot from the front, sitting on a sofa at home in the evening, smiling, lamp light."
+  - "in a close-up from a high angle, looking up into the camera, soft daylight."
+  - "in a medium shot in the driver's seat of a car, three-quarter view from the left, daylight through the windshield."
+  - "in a wide shot from the front, standing on a stage in a single spotlight, dark hall around."
+  - "in a medium shot on a forest hiking trail, three-quarter view from the left, a backpack on, dappled light."
+  - "in a close-up from the front, snow falling, wearing a winter coat, overcast light."
+  - "in a medium shot from the front at an office desk in the evening, lit by a monitor and a desk lamp."
+  - "in a full-body shot at a three-quarter angle from the right, riding a bicycle on a country road in the morning."

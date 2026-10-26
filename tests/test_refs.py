@@ -213,3 +213,12 @@ def test_face_tools_add_auraface_embeddings_when_given_one():
     me = face(10, 10, 100, ME)
     refs.add_extra(np.zeros((200, 200, 3), np.uint8), [me], {"auraface": Recognizer()})
     assert me.extra["auraface"].tolist() == [0.5, 0.5, 0.5, 0.5]
+
+
+def test_prepare_ranks_person_crops_best_first(tmp_path):
+    pics = [write(tmp_path / "p1.jpg", (2000, 1500)), write(tmp_path / "p2.jpg", (1800, 1500))]
+    tools = FakeTools({(1500, 2000): [face(800, 400, 500, ME, sharpness=100)],
+                       (1500, 1800): [face(700, 400, 500, ME_TOO, sharpness=400)]})
+    report = refs.prepare(pics, tmp_path / "refs", tools)
+    assert [(r.source, r.rank) for r in report.used] == [("p1.jpg", 2), ("p2.jpg", 1)]
+    assert [r.source for r in report.best(1)] == ["p2.jpg"]

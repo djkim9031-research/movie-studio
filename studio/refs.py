@@ -53,6 +53,7 @@ class Reference:
     source: str
     face_px: int = 0
     sharpness: float = 0.0
+    rank: int = 0  # 1 is the best face (sharpest, largest, most frontal); 0 for pictures without a person
 
 
 @dataclass
@@ -63,6 +64,10 @@ class Report:
     @property
     def people(self) -> int:
         return sum(1 for r in self.used if r.kind == "person")
+
+    def best(self, count: int) -> list["Reference"]:
+        """The `count` best person crops, best first."""
+        return sorted((r for r in self.used if r.kind == "person"), key=lambda r: r.rank)[:count]
 
 
 # ArcFace's five-point layout of a 112 px face crop: eyes, nose tip, mouth corners, image left to right.
@@ -309,11 +314,12 @@ def prepare(pictures: list[Path], out: Path, tools) -> Report:
     chosen_keys = {key for key, _ in chosen}
     subject_keys = {key for key, _ in subject}
     report = Report()
+    rank = {key: i for i, (key, _) in enumerate(chosen, start=1)}
     for n, (key, face) in enumerate(sorted(chosen, key=lambda item: keys.index(item[0])), start=1):
         others = [f for f in faces[key] if f is not face]
         file = save_png(square_crop(load(paths[key]), face, others), out / f"person{n}.png")
         report.used.append(Reference("person", file, file, key.split(":", 1)[1], int(face.box[3]),
-                                     round(face.sharpness, 1)))
+                                     round(face.sharpness, 1), rank[key]))
     extras = 0
     for key in keys:
         name = key.split(":", 1)[1]

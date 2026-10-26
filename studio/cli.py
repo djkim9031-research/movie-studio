@@ -10,7 +10,7 @@ import anthropic
 import typer
 from pydantic import ValidationError
 
-from studio import bench, identity, models, provenance, refs, scene
+from studio import bench, identity, keyframe_bench, models, provenance, refs, scene
 from studio.claude.client import Claude, CredentialsError, Refused
 from studio.claude.ledger import BudgetExceeded, Ledger, summarize
 from studio.config import Config, load_config
@@ -465,3 +465,33 @@ def bench_rescore(runs: list[str] = typer.Argument(..., help="Run names under be
             typer.echo(f"FAIL  {error}")
             raise typer.Exit(1)
         typer.echo(f"PASS  rescored {run_dir.name}")
+
+
+@bench_app.command("keyframes")
+def bench_keyframes(person: str = typer.Option(..., help="Alias whose photos are the references."),
+                    engine: str = typer.Option(..., help=f"One of: {', '.join(keyframe_bench.ENGINES)}."),
+                    name: str = typer.Option(None, help="Run name; default the time and the engine."),
+                    limit: int = typer.Option(None, min=1, help="Only the first N shot prompts."),
+                    keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
+    """Render the bake-off's shot prompts with one engine from the person's best photos. Apache engines' stills are
+    face-scored; FLUX 3 Klein's are judged by eye."""
+    cfg = _state["cfg"]
+    if engine not in keyframe_bench.ENGINES:
+        typer.echo(f"FAIL  unknown engine {engine}; known: {', '.join(keyframe_bench.ENGINES)}")
+        raise typer.Exit(1)
+    _models_or_exit(cfg, ["face-detect", "face-id", *keyframe_bench.ENGINES[engine]["models"]])
+    run_name = scene.clean_name(name or f"{datetime.now():%Y%m%d-%H%M}-kf-{engine}")
+    run_dir = cfg.data_root / "bench" / run_name
+    if (run_dir / "results.json").exists():
+        typer.echo(f"FAIL  bench run {run_name} exists in {run_dir}; pick another name")
+        raise typer.Exit(1)
+    try:
+        with _comfy_session(cfg, keep_up):
+            results = keyframe_bench.run(cfg, alias=person, engine=engine, tools=face_tools(cfg),
+                                         run_dir=private_dir(run_dir), echo=typer.echo, limit=limit)
+    except (ValueError, FileNotFoundError, RuntimeError, TimeoutError) as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    scores = [c["score"] for c in results["cells"] if c["score"] is not None]
+    summary = f"mean score {sum(scores) / len(scores):+.2f} over {len(scores)} stills" if scores else "judged by eye"
+    typer.echo(f"PASS  {len(results['cells'])} stills, {summary}; review: {run_dir / 'review.html'}")
