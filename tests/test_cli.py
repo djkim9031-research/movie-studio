@@ -44,3 +44,17 @@ def test_models_verify_passes_matching_files_and_fails_altered_ones(tmp_path):
     weights.write_bytes(b"bbbb")
     bad = CliRunner().invoke(app, ["--config", str(cfg_file), "models", "verify", "demo"])
     assert bad.exit_code == 1 and "FAIL  vae/a.safetensors: sha256" in bad.output
+
+
+def test_render_test_refuses_while_the_container_is_down(monkeypatch):
+    monkeypatch.setattr("studio.gpu.runtime.is_running", lambda: False)
+    result = CliRunner().invoke(app, ["render-test"])
+    assert result.exit_code == 1
+    assert "run: uv run studio gpu up" in result.output
+
+
+def test_gpu_up_prints_the_local_address(monkeypatch):
+    monkeypatch.setattr("studio.gpu.runtime.up", lambda cfg: None)
+    result = CliRunner().invoke(app, ["gpu", "up"])
+    assert result.exit_code == 0, result.output
+    assert "http://127.0.0.1:8188" in result.output

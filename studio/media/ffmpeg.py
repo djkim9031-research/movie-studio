@@ -3,6 +3,7 @@
 n8.1 uses NVENC SDK 13.0 (driver 570+); n9.0 and master builds need driver 610+ for NVENC.
 """
 
+import json
 import os
 import re
 import shutil
@@ -131,3 +132,18 @@ def try_encode(cfg: Config, encoder: str) -> tuple[bool, str]:
                  "-c:v", encoder, "-f", "null", "-")
     lines = result.stderr.strip().splitlines()
     return result.returncode == 0, lines[-1] if lines else ""
+
+
+def probe(cfg: Config, path: Path) -> dict:
+    """Duration, size, frame rate and audio codec of a media file, from ffprobe."""
+    result = subprocess.run([str(binary(cfg, "ffprobe")), "-v", "error", "-show_streams", "-show_format",
+                             "-of", "json", str(path)], capture_output=True, text=True, check=True)
+    data = json.loads(result.stdout)
+    video = next((s for s in data["streams"] if s["codec_type"] == "video"), {})
+    audio = next((s for s in data["streams"] if s["codec_type"] == "audio"), None)
+    num, _, den = video.get("avg_frame_rate", "0/1").partition("/")
+    return {"duration_s": float(data["format"]["duration"]),
+            "width": video.get("width"),
+            "height": video.get("height"),
+            "fps": round(float(num) / float(den), 3) if float(den or 0) else 0.0,
+            "audio": audio["codec_name"] if audio else None}

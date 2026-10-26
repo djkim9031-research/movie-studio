@@ -83,9 +83,9 @@ def service_is_active(name: str) -> bool:
     return result.stdout.strip() == "active"
 
 
-def run_preflight(agent_service: str, min_free_gib: float) -> Verdict:
+def run_preflight(agent_service: str, min_free_gib: float, own_pids: frozenset[int] | set[int] = frozenset()) -> Verdict:
     processes = parse_compute_apps(
         _nvidia_smi("--query-compute-apps=pid,process_name,used_memory", "--format=csv,noheader,nounits"))
     memory = parse_gpu_memory(_nvidia_smi("--query-gpu=memory.total,memory.used", "--format=csv,noheader,nounits"))
     return evaluate(processes, memory, agent_active=service_is_active(agent_service), agent_service=agent_service,
-                    min_free_gib=min_free_gib, own_pids={os.getpid()})
+                    min_free_gib=min_free_gib, own_pids={os.getpid(), *own_pids})

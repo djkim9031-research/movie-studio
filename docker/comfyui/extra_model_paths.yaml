@@ -1,0 +1,9 @@
+# Weights live on the host in ~/studio-data/models/comfy, mounted read-only at /models.
+studio:
+  base_path: /models
+  diffusion_models: diffusion_models
+  text_encoders: text_encoders
+  vae: vae
+  loras: loras
+  latent_upscale_models: latent_upscale_models
+  model_patches: model_patches
