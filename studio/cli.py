@@ -9,7 +9,7 @@ import anthropic
 import typer
 from pydantic import ValidationError
 
-from studio import models, refs, scene
+from studio import identity, models, provenance, refs, scene
 from studio.claude.client import Claude, CredentialsError, Refused
 from studio.claude.ledger import BudgetExceeded, Ledger, summarize
 from studio.config import Config, load_config
@@ -33,6 +33,9 @@ app.add_typer(gpu_app, name="gpu")
 scene_app = typer.Typer(no_args_is_help=True, help="A scene from a prompt and pictures: stills, then clips of the "
                                                    "stills you pick.")
 app.add_typer(scene_app, name="scene")
+identity_app = typer.Typer(no_args_is_help=True, help="Face profiles of real people and identity scores, on this "
+                                                         "machine only.")
+app.add_typer(identity_app, name="identity")
 RENDER_TEST_PROMPT = ("A slow push-in toward a misty pond at morning. Fog drifts low across the water, willow "
                       "leaves and tall meadow grass sway in a light breeze, soft sunlight. Quiet outdoor ambience: "
                       "light wind and distant birds.")
@@ -301,3 +304,65 @@ def scene_clips(numbers: list[int] = typer.Argument(..., help="Still numbers to 
     count = len(numbers)
     typer.echo(f"PASS  {count} clip{'s' if count > 1 else ''}; review: "
                f"{scene.scene_dir(cfg, made['name']) / 'review.html'}")
+
+
+VIDEO_TYPES = {".mp4", ".mov", ".mkv", ".webm"}
+
+
+@identity_app.command("profile")
+def identity_profile(person: str = typer.Option(..., help="Alias: the folder name under cast/."),
+                     leave_out: list[str] = typer.Option([], "--leave-out",
+                                                         help="Photo file names to keep out, such as bench frames.")):
+    """Build a person's face profile from cast/ALIAS/photos: the person in most photos, one face per photo."""
+    cfg = _state["cfg"]
+    _models_or_exit(cfg, ["face-detect", "face-id"])
+    try:
+        profile = identity.build_profile(cfg, person, face_tools(cfg), leave_out=leave_out)
+    except ValueError as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    identity.save_profile(cfg, profile)
+    g = profile.genuine
+    typer.echo(f"PASS  profile of {person}: {len(profile.sources)} photos, genuine pairs {len(g)}: median "
+               f"{profile.genuine_median:.3f}, p5 {profile.genuine_p5:.3f}, min {float(g.min()):.3f}; "
+               f"digest {profile.digest}")
+
+
+@identity_app.command("score")
+def identity_score(files: list[Path] = typer.Argument(..., help="Images or clips to score."),
+                   person: str = typer.Option(..., help="Alias whose profile to score against.")):
+    """Score how much each face looks like the person. Files made from a model whose license forbids face
+    recognition, or of unknown origin, are refused."""
+    cfg = _state["cfg"]
+    _models_or_exit(cfg, ["face-detect", "face-id"])
+    try:
+        profile = identity.load_profile(cfg, person)
+    except FileNotFoundError as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    tools, refused = face_tools(cfg), False
+    for path in files:
+        problems = provenance.problems(cfg, path)
+        if problems:
+            for problem in problems:
+                typer.echo(f"REFUSED  {problem}")
+            refused = True
+            continue
+        if path.suffix.lower() in VIDEO_TYPES:
+            pinned = [] if provenance.is_camera_original(cfg, path) else provenance.params(path).get("pinned_frames", [0])
+            s = identity.score_clip(profile, tools, path, pinned).summary
+            if s.median is None:
+                typer.echo(f"{path.name}  no scorable face (coverage {s.coverage:.0%})")
+                continue
+            typer.echo(f"{path.name}  median {s.median:.3f} (percentile {identity.percentile(profile, s.median):.0f}), "
+                       f"mid-clip min {s.mid_min:.3f}, dips {s.dips} ({s.dip_seconds:.2f} s), coverage "
+                       f"{s.coverage:.0%}, yaw range {s.yaw_range:.2f}")
+        else:
+            frame = identity.score_image(profile, tools, path)
+            if frame.sim is None:
+                typer.echo(f"{path.name}  no face found")
+                continue
+            typer.echo(f"{path.name}  similarity {frame.sim:.3f}, percentile {identity.percentile(profile, frame.sim):.0f} "
+                       f"of {person}'s real pairs, face {frame.px:.0f} px, yaw {frame.yaw:.2f}")
+    if refused:
+        raise typer.Exit(1)

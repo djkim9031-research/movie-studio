@@ -33,6 +33,9 @@ models:
   ltx25-int8:
     repo: Lightricks/LTX-2.5
     revision: 49b093a39c19169a8a81721dcc541e07e945232f
+    # No biometric clause in the LTX-2.x license; its use policy bars "biometric identification" uses. Scoring
+    # the user's own consented likeness, privately, is the user's call (2026-10-26).
+    biometric_outputs: allowed
     files:
       - {path: diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors, size: 21504034224, sha256: c4279eeff115cbeaca494bd2183e7d768c38fe85a184dc6afbb7159157c44334}
       - {path: text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors, size: 15372969374, sha256: 6ce688a0aa98a5fa36a9f1e6c3f42152a498cc2b53ee8c15674c64244f91487f}
@@ -45,6 +48,7 @@ models:
     # Prompt enhancer of the stock LTX-2.5 template; needed only for the web UI, where the template runs as-is.
     repo: Comfy-Org/gemma-4
     revision: 63d0f7c476756b88910170c1df75e2384ea1af31
+    biometric_outputs: allowed
     files:
       - {path: text_encoders/gemma4_e2b_it_int8_convrot.safetensors, size: 5199997904, sha256: efeca0fcad2f863e5ed0a75e3af952b72bc963604c1dda6d20aee87a32b17566}
 
@@ -53,6 +57,8 @@ models:
     # and the prompt upsampler the model card says to always run.
     repo: black-forest-labs/flux-3-image-klein-comfy
     revision: feef60b0aaf63a4773ace96636ebbcf43b881312
+    # FLUX Kommunity License 4.a(iv): no biometric processing of the model or any data it produces.
+    biometric_outputs: forbidden
     files:
       - {path: diffusion_models/flux3-image-klein-bf16.safetensors, size: 11097404512, sha256: c3e9813cdd049c831c836b2e9db61150e49a93fc1a4c63b256494642fee0bd7c}
       - {path: text_encoders/qwen3vl_4b_bf16.safetensors, size: 8875719408, sha256: f0b24fc5c8d7c0ea6ca909da14c20af5cac53f22506be942c6c956f838b9630f}
@@ -64,12 +70,14 @@ models:
     repo: opencv/face_detection_yunet
     revision: 3cc26e7f1014a5ee5d74a42acee58bafc9d0a310
     root: faces
+    biometric_outputs: allowed
     files:
       - {path: face_detection_yunet_2023mar.onnx, size: 232589, sha256: 8f2383e4dd3cfbb4553ea8718107fc0423210dc964f9f4280604804ed2552fa4}
   face-id:
     repo: opencv/face_recognition_sface
     revision: 3d7082438a6e4551e840c9b2bb60b71e8da4b524
     root: faces
+    biometric_outputs: allowed
     files:
       - {path: face_recognition_sface_2021dec.onnx, size: 38696353, sha256: 0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79}
 

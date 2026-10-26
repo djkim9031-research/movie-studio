@@ -64,3 +64,20 @@
 - Pictures come as a folder, files, or both: every picture directly in a folder (JPEG, PNG, WebP; at most 60) in
   name order, each once. Faces are found one picture at a time and only the pictures used are read again, so a full
   folder never sits in memory. HEIC is reported, not read: Pillow needs an extra library for it.
+
+## 2026-10-26: identity program
+
+- Target: a film of up to 5 minutes in which each real person looks the same from every angle. Work is measured
+  first: a profile of the person from their real photos, and frame-by-frame scores of generated images and clips.
+- Face recognition runs only on files whose whole lineage allows it: camera originals in `cast/ALIAS/{photos,video,
+  bench}`, and files made by model sets marked `biometric_outputs: allowed`. Every generated file gets a provenance
+  sidecar (sha256, model sets and revisions, inputs, settings); files without one are refused.
+- FLUX 3 Klein is marked forbidden: its license bars biometric processing of the model or anything it produces, and
+  using its outputs to improve another model. Its images never enter a training set.
+- LTX-2.5 is marked allowed. The LTX-2.x license has no biometric clause; Lightricks' use policy bars outputs in
+  "biometric identification" uses. Privately scoring the user's own consented likeness is the user's decision.
+- Scores leave out the frames copied from a conditioning image (and two on each side), smooth over 0.3 s so a blink
+  is not a drop, count a dip only when it lasts 0.25 s below the person's genuine 5th percentile, and report faces
+  too turned or too small as unscored rather than failed.
+- Next: a second scorer (AuraFace), head-angle calibration and a real target from the user's own phone clips, a
+  fixed bench of start photos and motions, then video settings and engines compared on it.

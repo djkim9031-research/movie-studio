@@ -218,7 +218,7 @@ def save_png(bgr: np.ndarray, path: Path) -> Path:
     return path
 
 
-def gather(paths: list[Path]) -> tuple[list[Path], list[tuple[str, str]]]:
+def gather(paths: list[Path], limit: int = MAX_PICTURES) -> tuple[list[Path], list[tuple[str, str]]]:
     """Pictures from files and folders: every picture directly inside a folder, in name order, each picture once.
     Hidden files, subfolders and other files are left out; HEIC files are reported."""
     pictures, skipped, seen = [], [], set()
@@ -242,8 +242,8 @@ def gather(paths: list[Path]) -> tuple[list[Path], list[tuple[str, str]]]:
             take(path)
         else:
             raise ValueError(f"no picture or folder at {path}")
-    if len(pictures) > MAX_PICTURES:
-        raise ValueError(f"{len(pictures)} pictures given; a scene takes at most {MAX_PICTURES}")
+    if len(pictures) > limit:
+        raise ValueError(f"{len(pictures)} pictures given; at most {limit} are read")
     return pictures, skipped
 
 

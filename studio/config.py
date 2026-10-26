@@ -81,6 +81,8 @@ class ModelSet(BaseModel):
     repo: str
     revision: str
     root: str = "comfy"
+    # Whether the license lets face recognition run on what this set makes; anything but "allowed" is refused.
+    biometric_outputs: Literal["allowed", "forbidden", "unknown"] = "unknown"
     files: list[ModelFile]
 
     @field_validator("root")
