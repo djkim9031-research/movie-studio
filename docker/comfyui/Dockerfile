@@ -1,4 +1,5 @@
 # ComfyUI for studio: one pinned commit, PyTorch for CUDA 13.0, no manager and no custom nodes.
+# --offline turns off the paid partner nodes and stops the browser page from reaching the internet.
 # Build inputs come from config/studio.yaml through `studio gpu build`.
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
@@ -30,7 +31,7 @@ RUN git clone --filter=blob:none https://github.com/Comfy-Org/ComfyUI.git /opt/C
 COPY extra_model_paths.yaml /opt/ComfyUI/extra_model_paths.yaml
 WORKDIR /opt/ComfyUI
 EXPOSE 8188
-ENTRYPOINT ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188", "--disable-partner-nodes", \
+ENTRYPOINT ["python", "main.py", "--listen", "0.0.0.0", "--port", "8188", "--offline", \
             "--input-directory", "/io/input", "--output-directory", "/io/output", \
             "--temp-directory", "/io/temp", "--user-directory", "/io/user", \
             "--extra-model-paths-config", "/opt/ComfyUI/extra_model_paths.yaml"]
