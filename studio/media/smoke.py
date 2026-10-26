@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from studio.config import Config
+from studio.fs import private_dir
 from studio.media import ffmpeg
 from studio.media.ffmpeg import parse_ebur128_summary
 
@@ -21,7 +22,7 @@ def smoke_mux(cfg: Config, out: Path) -> tuple[float, float | None]:
     """Writes `out` with the tone gain set from a first measurement; returns its (LUFS, true peak dBFS)."""
     raw, _ = measure(cfg, "-f", "lavfi", "-i", TONE)
     gain_db = TARGET_LUFS - raw
-    out.parent.mkdir(parents=True, exist_ok=True)
+    private_dir(out.parent)
     ffmpeg.run(cfg, "-y", "-v", "error",
                "-f", "lavfi", "-i", PATTERN,
                "-f", "lavfi", "-i", f"{TONE},volume={gain_db:.2f}dB",

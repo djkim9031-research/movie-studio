@@ -4,6 +4,7 @@ n8.1 uses NVENC SDK 13.0 (driver 570+); n9.0 and master builds need driver 610+ 
 """
 
 import hashlib
+import os
 import re
 import shutil
 import subprocess
@@ -13,9 +14,11 @@ import urllib.request
 from pathlib import Path, PurePosixPath
 
 from studio.config import Config
+from studio.fs import private_dir
 
 RELEASES = "https://github.com/BtbN/FFmpeg-Builds/releases/download"
 BINARIES = ("ffmpeg", "ffprobe")
+DOWNLOAD_TIMEOUT_S = 60
 
 
 class ChecksumMismatch(RuntimeError):
@@ -60,9 +63,12 @@ def verify_sha256(path: Path, expected: str) -> None:
 
 
 def extract_binaries(tarball: Path, dest: Path) -> list[Path]:
-    """Copies <top>/bin/ffmpeg and <top>/bin/ffprobe out of the release; nothing else is extracted."""
-    dest = Path(dest)
-    dest.mkdir(parents=True, exist_ok=True)
+    """Copies <top>/bin/ffmpeg and <top>/bin/ffprobe out of the release; nothing else is extracted.
+
+    Each binary is written to a temp file and renamed over the old one: a running ffmpeg keeps its file, a crash
+    leaves the old pair intact, and a symlink planted at the destination is replaced rather than written through.
+    """
+    dest = private_dir(dest)
     with tarfile.open(tarball, "r:*") as tar:
         found = {}
         for member in tar.getmembers():
@@ -73,10 +79,19 @@ def extract_binaries(tarball: Path, dest: Path) -> list[Path]:
         missing = sorted(set(BINARIES) - found.keys())
         if missing:
             raise RuntimeError(f"{tarball} has no {', '.join(missing)}")
-        for name, member in found.items():
-            with tar.extractfile(member) as src, open(dest / name, "wb") as out:
-                shutil.copyfileobj(src, out)
-            (dest / name).chmod(0o755)
+        staged = {}
+        try:
+            for name, member in found.items():
+                fd, temp = tempfile.mkstemp(dir=dest, prefix=f".{name}-")
+                staged[name] = Path(temp)
+                with os.fdopen(fd, "wb") as out, tar.extractfile(member) as src:
+                    shutil.copyfileobj(src, out)
+                os.chmod(temp, 0o755)
+            for name, temp in staged.items():
+                os.replace(temp, dest / name)
+        finally:
+            for temp in staged.values():
+                temp.unlink(missing_ok=True)
     return [dest / name for name in BINARIES]
 
 
@@ -86,7 +101,9 @@ def install(cfg: Config) -> list[Path]:
         raise RuntimeError("no ffmpeg pin in config/studio.yaml")
     with tempfile.TemporaryDirectory() as tmp:
         tarball = Path(tmp) / pin.asset
-        urllib.request.urlretrieve(f"{RELEASES}/{pin.release_tag}/{pin.asset}", tarball)
+        url = f"{RELEASES}/{pin.release_tag}/{pin.asset}"
+        with urllib.request.urlopen(url, timeout=DOWNLOAD_TIMEOUT_S) as response, open(tarball, "wb") as out:
+            shutil.copyfileobj(response, out)
         verify_sha256(tarball, pin.sha256)
         return extract_binaries(tarball, cfg.bin_dir)
 

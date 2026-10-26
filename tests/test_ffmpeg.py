@@ -74,3 +74,39 @@ def test_extract_binaries_takes_only_ffmpeg_and_ffprobe(tmp_path):
     extract_binaries(tarball, dest)
     assert sorted(p.name for p in dest.iterdir()) == ["ffmpeg", "ffprobe"]
     assert (dest / "ffmpeg").read_bytes() == b"ffmpeg"
+
+
+def make_release(tmp_path):
+    tarball = tmp_path / "release.tar.xz"
+    with tarfile.open(tarball, "w:xz") as tar:
+        add_member(tar, "ffmpeg-n8.1/bin/ffmpeg", b"ffmpeg")
+        add_member(tar, "ffmpeg-n8.1/bin/ffprobe", b"ffprobe")
+    return tarball
+
+
+def test_extract_binaries_replaces_a_planted_symlink_instead_of_writing_through_it(tmp_path):
+    victim = tmp_path / "victim"
+    victim.write_bytes(b"keep")
+    dest = tmp_path / "bin"
+    dest.mkdir()
+    (dest / "ffmpeg").symlink_to(victim)
+    extract_binaries(make_release(tmp_path), dest)
+    assert victim.read_bytes() == b"keep"
+    assert not (dest / "ffmpeg").is_symlink() and (dest / "ffmpeg").read_bytes() == b"ffmpeg"
+
+
+def test_extract_binaries_ignores_link_members(tmp_path):
+    tarball = tmp_path / "links.tar.xz"
+    with tarfile.open(tarball, "w:xz") as tar:
+        link = tarfile.TarInfo("ffmpeg-n8.1/bin/ffmpeg")
+        link.type, link.linkname = tarfile.SYMTYPE, "/etc/hostname"
+        tar.addfile(link)
+        add_member(tar, "ffmpeg-n8.1/bin/ffprobe", b"ffprobe")
+    with pytest.raises(RuntimeError, match="no ffmpeg"):
+        extract_binaries(tarball, tmp_path / "bin")
+
+
+def test_extracted_binaries_land_in_an_owner_only_folder(tmp_path):
+    dest = tmp_path / "data" / "bin"
+    extract_binaries(make_release(tmp_path), dest)
+    assert (dest.stat().st_mode & 0o777, dest.parent.stat().st_mode & 0o777) == (0o700, 0o700)

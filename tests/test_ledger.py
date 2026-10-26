@@ -104,3 +104,10 @@ def test_summary_totals_by_film_and_route_and_counts_unpriced_calls(tmp_path):
     assert summary["total"] == pytest.approx(3.0)
     assert summary["by_film"] == {"a": pytest.approx(2.0), "b": pytest.approx(1.0)}
     assert summary["by_route"] == {"doctor": pytest.approx(1.0), "plan": pytest.approx(2.0)}
+
+
+def test_ledger_files_are_owner_only(tmp_path):
+    ledger = Ledger(tmp_path / "ledger", PRICES, clock=lambda: datetime(2031, 2, 3))
+    ledger.record(route="doctor", film="a", hops=[Hop("claude-opus-5-5", input_tokens=1)])
+    assert (tmp_path / "ledger").stat().st_mode & 0o777 == 0o700
+    assert (tmp_path / "ledger" / "2031-02.jsonl").stat().st_mode & 0o777 == 0o600

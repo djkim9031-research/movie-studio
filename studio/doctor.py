@@ -34,6 +34,13 @@ def check_disk(path: Path, min_free_gb: float) -> Check:
     return Check(f"disk {path}", free_gb >= min_free_gb, f"{free_gb:.0f} GB free, need {min_free_gb:.0f}")
 
 
+def check_private(path: Path) -> Check:
+    """Fails when group or others can write `path` (see studio/fs.py)."""
+    mode = path.stat().st_mode & 0o777
+    ok = not mode & 0o022
+    return Check(f"private {path}", ok, f"mode {mode:o}" if ok else f"mode {mode:o}; fix: chmod 700 {path}")
+
+
 def check_driver(version: str, minimum: int = MIN_DRIVER) -> Check:
     major = int(version.split(".")[0])
     return Check("nvidia driver", major >= minimum, f"{version}, need {minimum}+")
@@ -79,6 +86,7 @@ def check_claude_cache(claude) -> list[Check]:
 
 def run_doctor(cfg: Config, with_claude: bool = False) -> list[Check]:
     checks = check_gpu(cfg)
+    checks += [check_private(cfg.data_root), check_private(cfg.bin_dir)]
     checks.append(check_disk(Path.home(), cfg.disk.home_min_free_gb))
     checks.append(check_disk(cfg.disk.docker_root, cfg.disk.docker_min_free_gb))
     checks += check_ffmpeg(cfg)

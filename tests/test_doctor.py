@@ -7,7 +7,7 @@ import httpx2
 from studio.claude.client import Claude
 from studio.claude.ledger import Ledger
 from studio.config import Config
-from studio.doctor import Check, check_claude_cache, check_disk, check_driver, exit_code
+from studio.doctor import Check, check_claude_cache, check_disk, check_driver, check_private, exit_code
 
 
 def test_check_disk_passes_when_enough_space_is_free(tmp_path):
@@ -66,3 +66,13 @@ def test_cache_check_passes_when_the_second_call_reads_the_cache(tmp_path, monke
 def test_cache_check_fails_when_nothing_is_read_back(tmp_path, monkeypatch):
     claude, _ = claude_with_replies(tmp_path, monkeypatch, cache_reads=[0, 0])
     assert not all(c.ok for c in check_claude_cache(claude))
+
+
+def test_check_private_fails_when_group_or_others_can_write(tmp_path):
+    folder = tmp_path / "data"
+    folder.mkdir()
+    folder.chmod(0o775)
+    check = check_private(folder)
+    assert not check.ok and f"chmod 700 {folder}" in check.detail
+    folder.chmod(0o700)
+    assert check_private(folder).ok

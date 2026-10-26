@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 
 from studio.config import ClaudeConfig
+from studio.fs import append_private, private_dir
 
 MILLION = 1_000_000
 
@@ -85,9 +86,7 @@ class Ledger:
         row = {"ts": now.isoformat(timespec="seconds"), "route": route, "film": film, "request_id": request_id,
                "usd": round(total, 6),
                "hops": [{**asdict(hop), "usd": round(usd, 6), "priced": known} for hop, usd, known in priced]}
-        self.directory.mkdir(parents=True, exist_ok=True)
-        with open(self.directory / f"{now:%Y-%m}.jsonl", "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, sort_keys=True) + "\n")
+        append_private(private_dir(self.directory) / f"{now:%Y-%m}.jsonl", json.dumps(row, sort_keys=True) + "\n")
         return total
 
     def entries(self, month: str | None = None) -> list[dict]:
