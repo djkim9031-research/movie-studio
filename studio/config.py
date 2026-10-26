@@ -50,12 +50,27 @@ class FfmpegConfig(BaseModel):
     sha256: str
 
 
+class ModelFile(BaseModel):
+    path: str
+    size: int
+    sha256: str
+
+
+class ModelSet(BaseModel):
+    """Files of one Hugging Face repo at a pinned commit; paths follow ComfyUI's model folders."""
+
+    repo: str
+    revision: str
+    files: list[ModelFile]
+
+
 class Config(BaseModel):
     data_root: Path
     claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     gpu: GpuConfig = Field(default_factory=GpuConfig)
     disk: DiskConfig = Field(default_factory=DiskConfig)
     ffmpeg: FfmpegConfig | None = None
+    models: dict[str, ModelSet] = {}
 
     @field_validator("data_root", mode="before")
     @classmethod
@@ -81,6 +96,15 @@ class Config(BaseModel):
     @property
     def anthropic_env(self) -> Path:
         return self.secrets_dir / "anthropic.env"
+
+    @property
+    def hf_env(self) -> Path:
+        return self.secrets_dir / "hf.env"
+
+    @property
+    def models_dir(self) -> Path:
+        """ComfyUI's model root: diffusion_models/, text_encoders/, vae/ and so on."""
+        return self.data_root / "models" / "comfy"
 
 
 def load_config(path: Path | None = None) -> Config:

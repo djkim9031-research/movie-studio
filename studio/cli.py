@@ -3,6 +3,7 @@ from pathlib import Path
 
 import typer
 
+from studio import models
 from studio.claude.ledger import Ledger, summarize
 from studio.config import Config, load_config
 from studio.doctor import exit_code, run_doctor
@@ -12,6 +13,8 @@ from studio.media.smoke import TARGET_LUFS, smoke_mux
 # Tracebacks must never print locals: the Claude client holds the API key.
 app = typer.Typer(no_args_is_help=True, add_completion=False, pretty_exceptions_show_locals=False,
                   help="Short films from a written story.")
+models_app = typer.Typer(no_args_is_help=True, help="Pinned model weights.")
+app.add_typer(models_app, name="models")
 _state: dict[str, Config] = {}
 
 
@@ -63,3 +66,23 @@ def fetch_ffmpeg():
     """Download the pinned FFmpeg build, check its sha256 and install ffmpeg and ffprobe."""
     for path in ffmpeg.install(_state["cfg"]):
         typer.echo(path)
+
+
+def _report_models(name: str, problems: list[str]) -> None:
+    if problems:
+        for problem in problems:
+            typer.echo(f"FAIL  {problem}")
+        raise typer.Exit(1)
+    typer.echo(f"PASS  {name}: {len(_state['cfg'].models[name].files)} files match their pinned size and sha256")
+
+
+@models_app.command("verify")
+def models_verify(name: str):
+    """Check a pinned model set's files by size and sha256."""
+    _report_models(name, models.verify(_state["cfg"], name))
+
+
+@models_app.command("fetch")
+def models_fetch(name: str):
+    """Download a pinned model set with the Hugging Face token in secrets/hf.env, then verify it."""
+    _report_models(name, models.fetch(_state["cfg"], name))

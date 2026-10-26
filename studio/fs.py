@@ -4,8 +4,17 @@ A folder others can write lets them swap the ffmpeg that studio runs, edit the s
 the models; this machine's default umask leaves new folders group-writable.
 """
 
+import hashlib
 import os
 from pathlib import Path
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 22), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def private_dir(path: Path) -> Path:

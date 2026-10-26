@@ -7,12 +7,11 @@ import anthropic
 
 from studio.claude.ledger import Ledger, hops_from_message
 from studio.config import Config
+from studio.secrets import SecretError, read_secret
 
 API_URL = "https://api.anthropic.com"
 
-
-class CredentialsError(RuntimeError):
-    pass
+CredentialsError = SecretError
 
 
 class Refused(RuntimeError):
@@ -20,17 +19,7 @@ class Refused(RuntimeError):
 
 
 def read_api_key(env_file: Path) -> str:
-    """Reads ANTHROPIC_API_KEY from a KEY=VALUE file that only its owner can read."""
-    env_file = Path(env_file)
-    if not env_file.exists():
-        raise CredentialsError(f"{env_file} is missing; put ANTHROPIC_API_KEY=... in it with mode 0600")
-    if env_file.stat().st_mode & 0o077:
-        raise CredentialsError(f"{env_file} must be mode 0600")
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        key, _, value = line.strip().removeprefix("export ").partition("=")
-        if key.strip() == "ANTHROPIC_API_KEY" and value.strip():
-            return value.strip().strip("'\"")
-    raise CredentialsError(f"no ANTHROPIC_API_KEY in {env_file}")
+    return read_secret(env_file, "ANTHROPIC_API_KEY")
 
 
 class Claude:

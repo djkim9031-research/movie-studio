@@ -3,7 +3,6 @@
 n8.1 uses NVENC SDK 13.0 (driver 570+); n9.0 and master builds need driver 610+ for NVENC.
 """
 
-import hashlib
 import os
 import re
 import shutil
@@ -14,7 +13,7 @@ import urllib.request
 from pathlib import Path, PurePosixPath
 
 from studio.config import Config
-from studio.fs import private_dir
+from studio.fs import private_dir, sha256_file
 
 RELEASES = "https://github.com/BtbN/FFmpeg-Builds/releases/download"
 BINARIES = ("ffmpeg", "ffprobe")
@@ -54,12 +53,9 @@ def parse_ebur128_summary(text: str) -> tuple[float, float | None]:
 
 
 def verify_sha256(path: Path, expected: str) -> None:
-    digest = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    if digest.hexdigest() != expected:
-        raise ChecksumMismatch(f"{path}: sha256 {digest.hexdigest()} differs from the pinned {expected}")
+    actual = sha256_file(path)
+    if actual != expected:
+        raise ChecksumMismatch(f"{path}: sha256 {actual} differs from the pinned {expected}")
 
 
 def extract_binaries(tarball: Path, dest: Path) -> list[Path]:

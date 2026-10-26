@@ -28,3 +28,19 @@ def test_doctor_prints_every_check_even_when_one_of_them_raises(tmp_path):
     assert result.exit_code == 1
     assert f"FAIL  disk {tmp_path / 'missing'}" in result.output
     assert "nvidia driver" in result.output and "ffmpeg" in result.output
+
+
+def test_models_verify_passes_matching_files_and_fails_altered_ones(tmp_path):
+    import hashlib
+    weights = tmp_path / "models" / "comfy" / "vae" / "a.safetensors"
+    weights.parent.mkdir(parents=True)
+    weights.write_bytes(b"aaaa")
+    digest = hashlib.sha256(b"aaaa").hexdigest()
+    cfg_file = tmp_path / "studio.yaml"
+    cfg_file.write_text(f"data_root: {tmp_path}\nmodels:\n  demo:\n    repo: org/demo\n    revision: abc\n"
+                        f"    files:\n      - {{path: vae/a.safetensors, size: 4, sha256: {digest}}}\n")
+    ok = CliRunner().invoke(app, ["--config", str(cfg_file), "models", "verify", "demo"])
+    assert ok.exit_code == 0 and "PASS  demo: 1 files match" in ok.output
+    weights.write_bytes(b"bbbb")
+    bad = CliRunner().invoke(app, ["--config", str(cfg_file), "models", "verify", "demo"])
+    assert bad.exit_code == 1 and "FAIL  vae/a.safetensors: sha256" in bad.output
