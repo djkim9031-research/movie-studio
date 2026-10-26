@@ -31,6 +31,7 @@ eval-private/
 # Secrets and encrypted files
 .env
 .env.*
+*.env
 *.key
 *.pem
 *.age

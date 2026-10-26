@@ -15,6 +15,8 @@ if [ -z "$other_email" ] || [ "$other_email" = "$WANT_EMAIL" ]; then
     other_email=someone.else@example.com
 fi
 token="ghp_$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 36)"
+anthropic_key="sk-ant-api03-$(LC_ALL=C tr -dc 'A-Za-z0-9_-' </dev/urandom | head -c 93)AA"
+hf_token="hf_$(LC_ALL=C tr -dc 'A-Za-z' </dev/urandom | head -c 34)"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
@@ -74,11 +76,17 @@ for s in "${samples[@]}"; do
     expect "sample $i in a file" "deny-list match" commit_file notes.txt "$s" "Update notes"
 done
 expect "fake GitHub token in a file" "gitleaks" commit_file config.txt "token = $token" "Add config"
+expect "fake Anthropic key in a file" "gitleaks" commit_file config.txt "ANTHROPIC_API_KEY=$anthropic_key" "Add config"
+expect "fake Anthropic key in a commit message" "gitleaks" commit_file notes.txt hello "$(printf 'Update notes\n\n%s' "$anthropic_key")"
+expect "fake Hugging Face token in a file" "gitleaks" commit_file config.txt "HF_TOKEN=$hf_token" "Add config"
+expect "a *.env file, forced past .gitignore" "ignored path" commit_file anthropic.env "ANTHROPIC_API_KEY=placeholder" "Add env"
+expect "file under secrets/, forced past .gitignore" "ignored path" commit_file secrets/hf.env "HF_TOKEN=placeholder" "Add env"
 expect "6 MB file" "over 5 MB" commit_big
 expect "file under data/, forced past .gitignore" "ignored path" commit_file data/x.txt x "Add data"
 expect "other email, committed with --no-verify" "wrong identity" commit_other_email
 expect "sample 1 in a message, with --no-verify" "deny-list match" commit_skip_push y.txt y "$(printf 'Add y\n\n%s' "${samples[0]}")"
 expect "fake token in a file, with --no-verify" "gitleaks" commit_skip_push config.txt "token = $token" "Add config"
+expect "fake Anthropic key, with --no-verify" "gitleaks" commit_skip_push config.txt "key = $anthropic_key" "Add config"
 expect "push of a notes record" "notes ref" push_notes
 expect "clean commit and push" accepted commit_push_clean
 refs=$(git ls-remote "$tmp/remote.git" | awk '{print $2}' | paste -sd' ')
