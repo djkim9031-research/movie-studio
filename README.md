@@ -33,8 +33,9 @@ saved next to it as `stillN.graph.json`.
 - Linux with an NVIDIA GPU of 48 GB or more and driver 580 or newer. Tested on an RTX PRO 5000 72 GB (Blackwell):
   stills peaked at 38 GiB of GPU memory and clips at 43 GiB.
 - Docker 24 or newer with the NVIDIA Container Toolkit 1.17 or newer (tested with 1.20.1).
-- [uv](https://docs.astral.sh/uv/), and about 150 GB of free disk: 81 GB of model weights, an 11 GB image, room for
-  results.
+- [uv](https://docs.astral.sh/uv/), the tool that installs this project's Python packages and runs its commands.
+  Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
+- About 150 GB of free disk: 81 GB of model weights, an 11 GB image, room for results.
 - An Anthropic API key. Claude Opus 5.5 writes the two prompts of a scene for about $0.03.
 - A Hugging Face read token, after accepting the licenses of
   [Lightricks/LTX-2.5](https://huggingface.co/Lightricks/LTX-2.5) and
@@ -51,6 +52,11 @@ saved next to it as `stillN.graph.json`.
    uv sync
    uv run studio fetch-ffmpeg
    ```
+
+   `uv sync` creates the project's own Python environment in `.venv`: Python 3.12 and the exact package versions
+   in `uv.lock`, nothing installed system-wide. `uv run studio ...` runs the project's `studio` command in that
+   environment, so run every command below from the `movie-studio` folder. To type `studio ...` without `uv run`,
+   run `source .venv/bin/activate` once per terminal.
 
 2. Save the two keys outside the repository, readable only by you. Type each key at the hidden prompt instead of
    pasting it into a command line, so it never lands in your shell history:
