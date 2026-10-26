@@ -182,5 +182,5 @@ def render_test(seconds: int = typer.Option(5, help="Clip length in whole second
     info = ffmpeg.probe(cfg, out)
     typer.echo(f"PASS  {info['duration_s']:.2f} s {info['width']}x{info['height']} {info['fps']:g} fps, "
                f"audio {info['audio']}, {elapsed:.1f} s wall, GPU memory peak "
-               f"{vram.peak_over_baseline_gib:.1f} GiB over the display baseline")
+               f"{vram.peak_mib / 1024:.1f} GiB on the card")
     typer.echo(f"      {out}")

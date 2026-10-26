@@ -90,3 +90,45 @@ class _NoSampler:
 
     def __exit__(self, *exc):
         return False
+
+
+def test_render_test_reports_the_clip_and_the_absolute_gpu_memory_peak(tmp_path, monkeypatch):
+    from studio.gpu.preflight import Verdict
+    from studio.media.smoke import smoke_mux
+
+    repo_cfg = load_config()
+    if not (repo_cfg.bin_dir / "ffmpeg").exists():
+        return
+    out_dir = tmp_path / "comfy-io" / "output" / "studio"
+    out_dir.mkdir(parents=True)
+    smoke_mux(repo_cfg, out_dir / "render_test_00001_.mp4")
+    (tmp_path / "comfy-io" / "input").mkdir(parents=True)
+    (tmp_path / "projects" / "_tests").mkdir(parents=True)
+    (tmp_path / "projects" / "_tests" / "still.png").write_bytes(b"png")
+    (tmp_path / "bin").symlink_to(repo_cfg.bin_dir)
+
+    class DoneClient:
+        def run(self, workflow, timeout_s):
+            return {"outputs": {"75": {"images": [{"filename": "render_test_00001_.mp4", "subfolder": "studio",
+                                                   "type": "output"}]}}}
+
+    class Peak:
+        peak_mib = 43008
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    cfg_file = tmp_path / "studio.yaml"
+    cfg_file.write_text(f"data_root: {tmp_path}\n")
+    monkeypatch.setattr("studio.gpu.runtime.is_running", lambda: True)
+    monkeypatch.setattr("studio.gpu.runtime.container_pids", lambda: set())
+    monkeypatch.setattr("studio.cli.run_preflight", lambda *a, **k: Verdict(ok=True))
+    monkeypatch.setattr("studio.gpu.runtime.client", lambda cfg: DoneClient())
+    monkeypatch.setattr("studio.cli.VramSampler", Peak)
+    result = CliRunner().invoke(app, ["--config", str(cfg_file), "render-test"])
+    assert result.exit_code == 0, result.output
+    assert "PASS  10.00 s 1280x720 24 fps, audio aac" in result.output
+    assert "GPU memory peak 42.0 GiB on the card" in result.output
