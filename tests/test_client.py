@@ -109,3 +109,17 @@ def test_refusal_raises_after_the_cost_is_recorded(tmp_path, monkeypatch):
     with pytest.raises(Refused):
         say_hi(claude)
     assert ledger.month_total("2031-02") == pytest.approx(4.0)
+
+
+def test_a_paid_call_is_recorded_even_when_pricing_it_fails(tmp_path, monkeypatch):
+    claude, ledger, _ = make_claude(tmp_path, monkeypatch)
+
+    def broken(message, requested_model):
+        raise ValueError("new usage shape")
+
+    monkeypatch.setattr("studio.claude.client.hops_from_message", broken)
+    with pytest.raises(ValueError, match="new usage shape"):
+        say_hi(claude)
+    rows = ledger.entries("2031-02")
+    assert len(rows) == 1 and rows[0]["hops"][0]["priced"] is False
+    assert ledger.month_total("2031-02") == pytest.approx(10.0)

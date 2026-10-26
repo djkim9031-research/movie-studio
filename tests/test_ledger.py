@@ -1,4 +1,5 @@
 from datetime import datetime
+from types import SimpleNamespace
 
 import pytest
 from anthropic.types import Message
@@ -49,8 +50,9 @@ def test_hops_from_plain_message_split_cache_writes_by_ttl():
 
 
 def test_hops_from_fallback_price_each_iteration_at_its_model():
+    # Top-level usage covers only the attempt that replied; iterations list every attempt.
     msg = BetaMessage.model_validate(message_json(model="claude-opus-5", usage={
-        "input_tokens": 300, "output_tokens": 90,
+        "input_tokens": 200, "output_tokens": 90,
         "iterations": [
             {"type": "message", "input_tokens": 100, "output_tokens": 0,
              "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
@@ -111,3 +113,45 @@ def test_ledger_files_are_owner_only(tmp_path):
     ledger.record(route="doctor", film="a", hops=[Hop("claude-opus-5-5", input_tokens=1)])
     assert (tmp_path / "ledger").stat().st_mode & 0o777 == 0o700
     assert (tmp_path / "ledger" / "2031-02.jsonl").stat().st_mode & 0o777 == 0o600
+
+
+ITERATIONS = [
+    {"type": "message", "input_tokens": 100, "output_tokens": 0,
+     "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0},
+    {"type": "fallback_message", "model": "claude-opus-5", "input_tokens": 200, "output_tokens": 90,
+     "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}]
+FALLBACK_HOPS = [Hop("claude-opus-5-5", input_tokens=100), Hop("claude-opus-5", input_tokens=200, output_tokens=90)]
+
+
+def test_writes_the_ttl_breakdown_leaves_out_are_charged_at_the_1h_rate():
+    msg = SimpleNamespace(model="claude-opus-5-5", usage={
+        "input_tokens": 10, "output_tokens": 5, "cache_creation_input_tokens": 3000,
+        "cache_creation": {"ephemeral_5m_input_tokens": 1000}})
+    assert hops_from_message(msg, "claude-opus-5-5") == [
+        Hop("claude-opus-5-5", input_tokens=10, output_tokens=5, cache_write_5m=1000, cache_write_1h=2000)]
+
+
+def test_writes_without_a_ttl_breakdown_are_charged_at_the_1h_rate():
+    msg = Message.model_validate(message_json({"input_tokens": 10, "output_tokens": 5,
+                                               "cache_creation_input_tokens": 1000}))
+    assert hops_from_message(msg, "claude-opus-5-5") == [
+        Hop("claude-opus-5-5", input_tokens=10, output_tokens=5, cache_write_1h=1000)]
+
+
+def test_iterations_on_a_non_beta_message_are_priced_per_model():
+    msg = Message.model_validate(message_json(model="claude-opus-5", usage={
+        "input_tokens": 200, "output_tokens": 90, "iterations": ITERATIONS}))
+    assert hops_from_message(msg, "claude-opus-5-5") == FALLBACK_HOPS
+
+
+def test_iterations_given_as_plain_dicts_are_priced_per_model():
+    msg = SimpleNamespace(model="claude-opus-5", usage={"input_tokens": 200, "output_tokens": 90,
+                                                         "iterations": ITERATIONS})
+    assert hops_from_message(msg, "claude-opus-5-5") == FALLBACK_HOPS
+
+
+def test_record_unpriced_charges_every_token_at_the_unknown_rates(tmp_path):
+    ledger = Ledger(tmp_path, PRICES, clock=lambda: datetime(2031, 2, 3))
+    usd = ledger.record_unpriced(route="doctor", film="a", usage={"input_tokens": M, "output_tokens": 0})
+    assert usd == pytest.approx(10.0)
+    assert ledger.entries("2031-02")[0]["hops"][0]["priced"] is False

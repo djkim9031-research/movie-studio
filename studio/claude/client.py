@@ -49,8 +49,14 @@ class Claude:
         self.ledger.check_caps(film)
         output_config = {"effort": target.effort, **params.pop("output_config", {})}
         message = self.client.messages.create(model=target.model, output_config=output_config, **params)
-        self.ledger.record(route=route, film=film, hops=hops_from_message(message, target.model),
-                           request_id=getattr(message, "_request_id", None))
+        request_id = getattr(message, "_request_id", None)
+        try:
+            self.ledger.record(route=route, film=film, hops=hops_from_message(message, target.model),
+                               request_id=request_id)
+        except Exception:
+            # The call is already paid for; keep a row at the highest rates before the error surfaces.
+            self.ledger.record_unpriced(route=route, film=film, usage=message.usage, request_id=request_id)
+            raise
         if message.stop_reason == "refusal":
             details = getattr(message, "stop_details", None)
             raise Refused(f"{route}: refused ({getattr(details, 'category', None)})")

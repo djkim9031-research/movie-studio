@@ -40,23 +40,38 @@ def price_hop(hop: Hop, cfg: ClaudeConfig) -> tuple[float, bool]:
     return usd, known
 
 
+def _field(obj, name: str):
+    """Usage arrives as SDK objects, or as plain dicts for fields the SDK type does not declare."""
+    if obj is None:
+        return None
+    return obj.get(name) if isinstance(obj, dict) else getattr(obj, name, None)
+
+
+def _tokens(obj, name: str) -> int:
+    return int(_field(obj, name) or 0)
+
+
 def _hop(model: str, usage) -> Hop:
-    written = getattr(usage, "cache_creation_input_tokens", None) or 0
-    by_ttl = getattr(usage, "cache_creation", None)
+    by_ttl = _field(usage, "cache_creation")
+    five = _tokens(by_ttl, "ephemeral_5m_input_tokens")
+    hour = _tokens(by_ttl, "ephemeral_1h_input_tokens")
+    # Writes the TTL breakdown does not account for are charged at the dearer 1-hour rate.
+    hour += max(_tokens(usage, "cache_creation_input_tokens") - five - hour, 0)
     return Hop(model=model,
-               input_tokens=usage.input_tokens or 0,
-               output_tokens=usage.output_tokens or 0,
-               cache_read=getattr(usage, "cache_read_input_tokens", None) or 0,
-               cache_write_5m=by_ttl.ephemeral_5m_input_tokens if by_ttl else written,
-               cache_write_1h=by_ttl.ephemeral_1h_input_tokens if by_ttl else 0)
+               input_tokens=_tokens(usage, "input_tokens"),
+               output_tokens=_tokens(usage, "output_tokens"),
+               cache_read=_tokens(usage, "cache_read_input_tokens"),
+               cache_write_5m=five,
+               cache_write_1h=hour)
 
 
 def hops_from_message(message, requested_model: str) -> list[Hop]:
-    """One hop per model that billed. With iterations (fallbacks, compaction) the top-level usage is their
-    sum, so only the iterations are priced; an iteration without a model ran on the requested one."""
-    iterations = getattr(message.usage, "iterations", None)
+    """One hop per model that billed. With iterations (fallbacks, compaction) every attempt is listed there and
+    the top-level usage covers only the attempt that replied, so only the iterations are priced; an iteration
+    without a model ran on the requested one."""
+    iterations = _field(message.usage, "iterations")
     if iterations:
-        return [_hop(str(getattr(it, "model", None) or requested_model), it) for it in iterations]
+        return [_hop(str(_field(it, "model") or requested_model), it) for it in iterations]
     return [_hop(str(message.model), message.usage)]
 
 
@@ -88,6 +103,15 @@ class Ledger:
                "hops": [{**asdict(hop), "usd": round(usd, 6), "priced": known} for hop, usd, known in priced]}
         append_private(private_dir(self.directory) / f"{now:%Y-%m}.jsonl", json.dumps(row, sort_keys=True) + "\n")
         return total
+
+    def record_unpriced(self, *, route: str, film: str, usage, request_id: str | None = None) -> float:
+        """For a paid call whose usage could not be priced: top-level tokens at the unknown-model rates."""
+        hop = Hop(model="unpriced",
+                  input_tokens=_tokens(usage, "input_tokens"),
+                  output_tokens=_tokens(usage, "output_tokens"),
+                  cache_read=_tokens(usage, "cache_read_input_tokens"),
+                  cache_write_1h=_tokens(usage, "cache_creation_input_tokens"))
+        return self.record(route=route, film=film, hops=[hop], request_id=request_id)
 
     def entries(self, month: str | None = None) -> list[dict]:
         files = [self.directory / f"{month}.jsonl"] if month else sorted(self.directory.glob("*.jsonl"))
