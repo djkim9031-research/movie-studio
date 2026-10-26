@@ -11,8 +11,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
     UV_NO_CACHE=1 \
     UV_PYTHON_INSTALL_DIR=/opt/python
 
+# gcc: Triton compiles its kernel launcher at run time; the int8 weights run through Triton kernels.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates git libgl1 libglib2.0-0 \
+ && apt-get install -y --no-install-recommends ca-certificates gcc git libc6-dev libgl1 libglib2.0-0 \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.19 /uv /usr/local/bin/uv

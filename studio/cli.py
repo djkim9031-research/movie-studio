@@ -9,7 +9,7 @@ import typer
 from studio import models
 from studio.fs import private_dir
 from studio.gpu import runtime
-from studio.gpu.comfy import output_files
+from studio.gpu.comfy import RenderError, WorkflowError, output_files
 from studio.gpu.preflight import run_preflight
 from studio.gpu.vram import VramSampler
 from studio.workflow import fill, strip_prompt_enhancer
@@ -165,8 +165,12 @@ def render_test(seconds: int = typer.Option(5, help="Clip length in whole second
                     {"prompt": prompt, "image": "render_test.png", "seconds": seconds, "width": 1280, "height": 704,
                      "seed": seed, "prefix": "studio/render_test"})
     started = time.monotonic()
-    with VramSampler() as vram:
-        entry = runtime.client(cfg).run(workflow, timeout_s=1800)
+    try:
+        with VramSampler() as vram:
+            entry = runtime.client(cfg).run(workflow, timeout_s=1800)
+    except (RenderError, WorkflowError, TimeoutError) as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
     elapsed = time.monotonic() - started
     videos = [f for f in output_files(entry) if f[1].endswith(".mp4")]
     if not videos:
