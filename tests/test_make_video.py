@@ -83,9 +83,38 @@ def test_make_video_refuses_a_missing_picture(tmp_path):
     assert result.exit_code == 1 and "no picture at" in result.output
 
 
-def test_output_paths_must_stay_inside_comfyuis_output_folder(tmp_path):
-    from studio.gpu.comfy import RenderError
-    from studio.render import output_path
-    assert output_path(tmp_path, "studio", "a.mp4") == tmp_path / "studio" / "a.mp4"
-    with pytest.raises(RenderError, match="outside"):
-        output_path(tmp_path, "../..", "etc/passwd")
+def test_make_video_refuses_an_output_path_that_leaves_comfyuis_folder(tmp_path, monkeypatch):
+    if not ffmpeg.binary(CFG).exists():
+        pytest.skip("run: uv run studio fetch-ffmpeg")
+    picture = make_picture(tmp_path / "pond.jpg", 1600, 900)
+    secret = tmp_path / "private.mp4"
+    secret.write_bytes(b"private")
+    (tmp_path / "comfy-io" / "input").mkdir(parents=True)
+    (tmp_path / "comfy-io" / "output").mkdir(parents=True)
+    (tmp_path / "bin").symlink_to(CFG.bin_dir)
+
+    class EscapingClient:
+        def run(self, workflow, timeout_s):
+            return {"outputs": {"75": {"images": [{"filename": "private.mp4", "subfolder": "../..",
+                                                   "type": "output"}]}}}
+
+    class Peak:
+        peak_mib = 1
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    cfg_file = tmp_path / "studio.yaml"
+    cfg_file.write_text(f"data_root: {tmp_path}\n")
+    monkeypatch.setattr("studio.gpu.runtime.is_running", lambda: True)
+    monkeypatch.setattr("studio.gpu.runtime.container_pids", lambda: set())
+    monkeypatch.setattr("studio.cli.run_preflight", lambda *a, **k: Verdict(ok=True))
+    monkeypatch.setattr("studio.gpu.runtime.client", lambda cfg: EscapingClient())
+    monkeypatch.setattr("studio.render.VramSampler", Peak)
+    result = CliRunner().invoke(app, ["--config", str(cfg_file), "make-video", str(picture), "--prompt", "x",
+                                      "--seed", "1"])
+    assert result.exit_code == 1 and "FAIL  unsafe output" in result.output
+    assert not (tmp_path / "projects" / "videos" / "pond-seed1.mp4").exists()

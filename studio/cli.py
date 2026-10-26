@@ -1,6 +1,5 @@
 import re
 import secrets
-import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -167,14 +166,13 @@ def render_test(seconds: int = typer.Option(5, help="Clip length in whole second
     if not still.exists():
         typer.echo(f"FAIL  no start frame at {still}")
         raise typer.Exit(1)
+    out = private_dir(cfg.projects_dir / "_tests") / f"ltx25_render_test_seed{seed}.mp4"
     try:
-        result = render_i2v(cfg, still, prompt, seconds, seed, LANDSCAPE, "render_test")
+        result = render_i2v(cfg, still, prompt, seconds, seed, LANDSCAPE, "render_test", out)
     except (RenderError, WorkflowError, TimeoutError) as error:
         typer.echo(f"FAIL  {error}")
         raise typer.Exit(1)
-    out = private_dir(cfg.projects_dir / "_tests") / f"ltx25_render_test_seed{seed}.mp4"
-    shutil.copyfile(result.clip, out)
-    _report_clip(out, result.elapsed_s, result.peak_gib)
+    _report_clip(result.clip, result.elapsed_s, result.peak_gib)
 
 
 @app.command("make-video")
@@ -197,15 +195,14 @@ def make_video(picture: Path = typer.Argument(..., help="Start frame: any photo 
     try:
         _gpu_ours_or_exit(cfg)
         size = target_size(*image_size(cfg, picture))
+        clip = private_dir(cfg.projects_dir / "videos") / f"{name}-seed{seed}.mp4"
         with tempfile.TemporaryDirectory() as tmp:
             still = prepare_still(cfg, picture, Path(tmp) / "start.png", size)
             try:
-                result = render_i2v(cfg, still, prompt, seconds, seed, size, name)
+                result = render_i2v(cfg, still, prompt, seconds, seed, size, name, clip)
             except (RenderError, WorkflowError, TimeoutError) as error:
                 typer.echo(f"FAIL  {error}")
                 raise typer.Exit(1)
-        clip = private_dir(cfg.projects_dir / "videos") / f"{name}-seed{seed}.mp4"
-        shutil.copyfile(result.clip, clip)
         clip.with_suffix(".txt").write_text(
             f"prompt: {prompt}\nseconds: {seconds}\nseed: {seed}\nsize: {size[0]}x{size[1]}\npicture: {picture}\n"
             f"model: LTX-2.5 distilled int8, image {runtime.image_tag(cfg)}\n"

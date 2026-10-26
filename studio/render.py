@@ -1,14 +1,13 @@
 """Image-to-video through the exported LTX-2.5 workflow: a still and a prompt in, a clip with sound out."""
 
 import json
-import shutil
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
 from studio.config import Config
-from studio.fs import private_dir
+from studio.fs import copy_into, copy_out, private_dir
 from studio.gpu import runtime
 from studio.gpu.comfy import RenderError, output_files
 from studio.gpu.vram import VramSampler
@@ -42,14 +41,6 @@ def prepare_still(cfg: Config, picture: Path, out: Path, size: tuple[int, int]) 
     return Path(out)
 
 
-def output_path(root: Path, subfolder: str, filename: str) -> Path:
-    """Where ComfyUI says it wrote a file, refused if that is outside its output folder."""
-    path = (Path(root) / subfolder / filename).resolve()
-    if not path.is_relative_to(Path(root).resolve()):
-        raise RenderError(f"ComfyUI reported an output outside {root}: {subfolder}/{filename}")
-    return path
-
-
 @dataclass
 class Render:
     clip: Path
@@ -58,10 +49,15 @@ class Render:
 
 
 def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, size: tuple[int, int],
-               name: str) -> Render:
-    """One render with `still` (already `size`) as the first frame; the clip stays in ComfyUI's output folder."""
+               name: str, dest: Path) -> Render:
+    """One render with `still` (already `size`) as the first frame, saved to `dest`.
+
+    ComfyUI's folders are writable from the container, so files go in and come out without following links."""
     input_name = f"{name}.png"
-    shutil.copyfile(still, private_dir(cfg.comfy_io_dir / "input") / input_name)
+    try:
+        copy_into(still, private_dir(cfg.comfy_io_dir / "input"), input_name)
+    except (ValueError, OSError) as error:
+        raise RenderError(f"unsafe input folder: {error}") from None
     workflow = fill(strip_prompt_enhancer(json.loads((WORKFLOWS / "ltx25_i2v.json").read_text())),
                     json.loads((WORKFLOWS / "ltx25_i2v.slots.json").read_text()),
                     {"prompt": prompt, "image": input_name, "seconds": seconds, "width": size[0],
@@ -74,5 +70,9 @@ def render_i2v(cfg: Config, still: Path, prompt: str, seconds: int, seed: int, s
     if not videos:
         raise RenderError(f"the run finished without an MP4: {output_files(entry)}")
     subfolder, filename, _ = videos[0]
-    return Render(clip=output_path(cfg.comfy_io_dir / "output", subfolder, filename), elapsed_s=elapsed,
+    try:
+        copy_out(cfg.comfy_io_dir, ["output", *Path(subfolder).parts, filename], dest)
+    except (ValueError, OSError) as error:
+        raise RenderError(f"unsafe output path from ComfyUI: {subfolder}/{filename} ({error})") from None
+    return Render(clip=Path(dest), elapsed_s=elapsed,
                   peak_gib=vram.peak_mib / 1024 if vram.peak_mib is not None else None)
