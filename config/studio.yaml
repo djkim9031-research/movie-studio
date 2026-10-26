@@ -20,3 +20,9 @@ disk:
   home_min_free_gb: 300
   docker_root: /var/lib/docker
   docker_min_free_gb: 50
+
+# BtbN static build, last build of September 2026 (month-end builds are kept two years).
+ffmpeg:
+  release_tag: autobuild-2026-09-30-13-08
+  asset: ffmpeg-n8.1.3-9-g29e619e767-linux64-gpl-8.1.tar.xz
+  sha256: 97ce978979194b5cf7e06a5e68020dbdaa7a4f3294c5452b6a1bc347100dbb79
