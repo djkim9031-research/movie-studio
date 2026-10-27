@@ -54,7 +54,7 @@ def test_scene_stills_then_clips(setup):
     result = CliRunner().invoke(app, ["--config", str(cfg_file), "scene", "clips", "--name", "moon", "2",
                                       "--seed", "7"])
     assert result.exit_code == 0, result.output
-    assert (scenes / "moon" / "clips" / "still2-seed7-ltx-int8-2stage.mp4").exists()
+    assert (scenes / "moon" / "clips" / "still2-seed7-ltx-int8-2stage-5s.mp4").exists()
     assert "PASS  1 clip" in result.output
 
 

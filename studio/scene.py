@@ -120,7 +120,7 @@ def make_clips(cfg: Config, *, name: str, numbers: list[int], seconds: int, seed
     with gpu():
         for n in numbers:
             clip_seed = seed if seed is not None else secrets.randbelow(2**31)
-            dest = clips_dir / f"still{n}-seed{clip_seed}-{video}.mp4"
+            dest = clips_dir / f"still{n}-seed{clip_seed}-{video}-{seconds}s.mp4"
             with tempfile.TemporaryDirectory() as tmp:
                 start = prepare_still(cfg, folder / stills[n]["file"], Path(tmp) / "start.png", size)
                 result = render_clip(cfg, video, start, data["motion_prompt"], seconds, clip_seed,

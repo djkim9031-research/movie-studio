@@ -105,8 +105,26 @@ def test_make_clips_animates_the_chosen_stills_with_the_saved_motion_prompt(cfg,
                           prompt=REPLY["motion_prompt"], seconds=5, seed=7, size=(1280, 704), name="moon_still2")]
     data = json.loads((folder / "scene.json").read_text())
     assert data["clips"] == [{"still": 2, "seed": 7, "seconds": 5, "video": "wan-4step-1022",
-                              "file": "clips/still2-seed7-wan-4step-1022.mp4", "render_s": 27.0}]
-    assert "clips/still2-seed7-wan-4step-1022.mp4" in (folder / "review.html").read_text()
+                              "file": "clips/still2-seed7-wan-4step-1022-5s.mp4", "render_s": 27.0}]
+    assert "clips/still2-seed7-wan-4step-1022-5s.mp4" in (folder / "review.html").read_text()
+
+
+def test_make_clips_keeps_a_clip_of_another_length_from_the_same_still_seed_and_variant(cfg, tmp_path, fake_stills,
+                                                                                      monkeypatch):
+    scene.make_stills(cfg, name="moon", prompt="x", pictures=pictures(tmp_path), count=1, portrait=False,
+                      claude=FakeClaude(), tools=TOOLS, echo=print)
+
+    def render_clip(cfg, variant, start, prompt, seconds, seed, name, dest, size):
+        dest.write_text(f"{seconds} s")
+        return SimpleNamespace(clip=dest, elapsed_s=27.0, peak_gib=42.7, reused_nodes=0)
+
+    monkeypatch.setattr("studio.scene.render_clip", render_clip)
+    monkeypatch.setattr("studio.scene.prepare_still", lambda cfg, picture, out, size: picture)
+    for seconds in (5, 10):
+        scene.make_clips(cfg, name="moon", numbers=[1], seconds=seconds, seed=7, echo=print, video="wan-4step-1022")
+    folder = cfg.projects_dir / "scenes" / "moon"
+    files = [c["file"] for c in json.loads((folder / "scene.json").read_text())["clips"]]
+    assert sorted((folder / f).read_text() for f in files) == ["10 s", "5 s"]
 
 
 def test_make_clips_refuses_a_still_that_does_not_exist(cfg, tmp_path, fake_stills):

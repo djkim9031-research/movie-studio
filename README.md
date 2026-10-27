@@ -155,7 +155,8 @@ and the kind of motion; Claude turns it into the detailed prompts the models nee
 
 - `refs/`: the face crops and the other pictures as used
 - `stills/stillN.png` and `stills/stillN.graph.json`: each still and the exact ComfyUI graph that drew it
-- `clips/stillN-seedS.mp4`: the clips, with sound
+- `clips/stillN-seedS-VARIANT-Ls.mp4`: the clips (seed S, video variant, L seconds); LTX clips have sound, Wan
+  clips do not
 - `scene.json`: the prompt, Claude's two prompts, the upsampler's caption, seeds, timings and model versions
 - `review.html`: the page to compare them; it shows real people, so keep it to yourself
 
