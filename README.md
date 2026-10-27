@@ -40,7 +40,7 @@ saved next to it as `stillN.graph.json`.
 - [uv](https://docs.astral.sh/uv/), the tool that installs this project's Python packages and runs its commands.
   Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
 - About 150 GB of free disk for scenes: 81 GB of model weights, an 11 GB image, room for results. Films add
-  69 GB for Wan 2.2, and their sound about 25 GB more (weights and the sound worker's environment).
+  69 GB for Wan 2.2, and their sound about 20 GB more (weights and the sound worker's environment).
 - An Anthropic API key. Claude Opus 5.5 writes the two prompts of a scene for about $0.03.
 - A Hugging Face read token, after accepting the licenses of
   [Lightricks/LTX-2.5](https://huggingface.co/Lightricks/LTX-2.5) and
@@ -192,6 +192,38 @@ The film is silent: Wan 2.2 makes no sound. The shot plan already holds a sound 
 - `review.html`: the page to watch it all; it shows real people, so keep it to yourself
 
 Every still, clip and film has a `.prov.json` record beside it: its sha256, the models that made it and its inputs.
+
+### Sound
+
+Wan makes no sound, so a film gets its sound in a second step: PrismAudio watches each finished clip and makes a
+44.1 kHz stereo track from the shot's sound prompt (hooves, wind, cloth, the ambience of the place; no music or
+voices). The tracks are fitted to the shots, joined, brought to -16 LUFS and written as `film-sound.mp4`.
+
+PrismAudio runs in its own Python environment (Python 3.11 with PyTorch and JAX for this GPU), from a pinned source
+commit, with downloads turned off. Set it up once:
+
+1. Request access to [google/t5gemma-l-l-ul2-it](https://huggingface.co/google/t5gemma-l-l-ul2-it) with the
+   Hugging Face account of your token. PrismAudio reads the sound prompt with T5Gemma, and Google reviews requests
+   by hand.
+
+2. Download the other weights (8 GB) and build the worker (7 GB of packages):
+
+   ```sh
+   uv run studio models fetch prismaudio
+   uv run studio models fetch videoprism-lvt
+   workers/prismaudio/setup.sh
+   ```
+
+3. Once access is granted, the t5gemma model set is added to `config/studio.yaml` (its small files can only be
+   hashed after download) and fetched with `uv run studio models fetch t5gemma`.
+
+Then add sound to a film:
+
+```sh
+uv run studio film sound --name ride
+```
+
+It stops ComfyUI first: the worker needs the GPU, about 10 GB. If a setup step is missing, it says which.
 
 ## What leaves the machine
 
