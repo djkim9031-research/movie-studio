@@ -7,7 +7,7 @@ from PIL import Image
 from studio import scene
 from studio.config import Config
 from studio.stills import Still
-from tests.test_refs import ME, ME_TOO, FakeTools, face, write
+from tests.test_refs import ME, ME_TOO, OTHER, FakeTools, face, write
 
 REPLY = {"still_request": "Create a photograph of the person shown in images 1-2 on the Moon.",
          "motion_prompt": "On the Moon, the camera stays still; the person holds the same thin smile."}
@@ -173,3 +173,14 @@ def test_compare_page_puts_two_scenes_side_by_side(cfg, tmp_path, fake_stills):
                           claude=FakeClaude(), tools=TOOLS, echo=print)
     page = scene.compare_page(cfg, ["chosun", "chosun-v2"])
     assert "chosun/stills/still1.png" in page and "chosun-v2/stills/still1.png" in page
+
+
+def test_references_name_a_picture_of_other_people_as_such(tmp_path):
+    pics = [write(tmp_path / "p1.jpg", (2000, 1500)), write(tmp_path / "p2.jpg", (1800, 1500)),
+            write(tmp_path / "hanbok.jpg", (1600, 1500)), write(tmp_path / "palace.png", (1400, 700), exif=False)]
+    tools = FakeTools({(1500, 2000): [face(800, 400, 500, ME)], (1500, 1800): [face(700, 400, 500, ME_TOO)],
+                       (1500, 1600): [face(600, 300, 400, OTHER)]})
+    lines = []
+    scene.references(pics, tmp_path / "scene", tools, lines.append)
+    assert any("from hanbok.jpg (other people, faces blurred)" in line for line in lines)
+    assert any("from palace.png (no person)" in line for line in lines)

@@ -64,7 +64,10 @@ def references(pictures: list[Path], folder: Path, tools, echo) -> refs.Report:
     private_dir(folder)
     report = refs.prepare(pictures, folder / "refs", tools)
     for ref in report.used:
-        detail = f"face {ref.face_px} px, sharpness {ref.sharpness:.0f}" if ref.kind == "person" else "no person"
+        if ref.kind == "person":
+            detail = f"face {ref.face_px} px, sharpness {ref.sharpness:.0f}"
+        else:
+            detail = "other people, faces blurred" if ref.faces_blurred else "no person"
         echo(f"refs  {ref.file.name} from {ref.source} ({detail})")
     for source, reason in report.skipped:
         echo(f"refs  skipped {source}: {reason}")
