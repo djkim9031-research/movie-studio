@@ -27,6 +27,8 @@ uv python install -q 3.11.15 --no-bin
 [ -x "$home/.venv/bin/python" ] ||
   uv venv -q --no-project --python "$(UV_PYTHON_PREFERENCE=only-managed uv python find --no-project 3.11.15)" \
     "$home/.venv"
+# Bytecode compiling starts one Python per CPU thread: more open files than the usual soft limit of 1024 allows.
+ulimit -Sn "$(ulimit -Hn)"
 uv pip install -q --python "$home/.venv/bin/python" --no-deps --compile-bytecode -r "$here/requirements.txt" \
   --index-url https://pypi.org/simple --extra-index-url https://download.pytorch.org/whl/cu130 \
   --index-strategy unsafe-best-match
