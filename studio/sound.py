@@ -10,8 +10,10 @@ from pathlib import Path
 
 from studio import models
 from studio.config import Config
+from studio.fs import write_private
 
 RUNNER = Path(__file__).resolve().parent.parent / "workers" / "prismaudio" / "run.py"
+ERROR = "prismaudio: error: "  # the runner's own error line
 SETS = ["prismaudio", "videoprism-lvt", "t5gemma"]
 # Paths under models/audio.
 TOKENIZER = "videoprism/cc_en.32000.sentencepiece.model"
@@ -75,8 +77,13 @@ class PrismAudio:
         result = subprocess.run([str(self.python(cfg)), "-I", str(RUNNER)], input=json.dumps(job),
                                 capture_output=True, text=True, timeout=3600, env=env, cwd=self.home(cfg))
         if result.returncode != 0:
+            log = dest.with_suffix(".log")
+            write_private(log, result.stderr)
+            # Upstream code can print after the runner's error line.
             lines = result.stderr.strip().splitlines()
-            raise SoundError(f"PrismAudio failed on {clip.name}: {lines[-1] if lines else 'no message'}")
+            errors = [line.removeprefix(ERROR) for line in lines if line.startswith(ERROR)]
+            message = errors[-1] if errors else lines[-1] if lines else "no message"
+            raise SoundError(f"PrismAudio failed on {clip.name}: {message}; log: {log}")
         if not dest.is_file():
             raise SoundError(f"PrismAudio wrote no track for {clip.name}")
         reply = json.loads(result.stdout.strip().splitlines()[-1])

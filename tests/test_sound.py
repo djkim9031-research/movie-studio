@@ -74,3 +74,18 @@ def test_render_reports_the_runner_error(cfg, tmp_path, monkeypatch):
         returncode=1, stdout="", stderr="Traceback ...\nRuntimeError: CUDA out of memory\n"))
     with pytest.raises(sound.SoundError, match="shot1.mp4: RuntimeError: CUDA out of memory"):
         worker.render(cfg, clip=tmp_path / "shot1.mp4", prompt="x", seconds=5, seed=1, dest=tmp_path / "shot1.wav")
+
+
+def test_render_reports_the_runner_error_line_and_keeps_the_log(cfg, tmp_path, monkeypatch):
+    worker = ready(cfg, monkeypatch)
+    # Upstream prints its run time at exit, after the runner's own error line.
+    stderr = ("Traceback ...\nRuntimeError: unexpected audio shape (2, 440320)\n"
+              "prismaudio: error: RuntimeError: unexpected audio shape (2, 440320)\n执行时间: 0.48 秒\n")
+    monkeypatch.setattr("studio.sound.subprocess.run", lambda args, **kw: SimpleNamespace(
+        returncode=1, stdout="", stderr=stderr))
+    log = tmp_path / "shot1.log"
+    with pytest.raises(sound.SoundError) as failed:
+        worker.render(cfg, clip=tmp_path / "shot1.mp4", prompt="x", seconds=10, seed=1, dest=tmp_path / "shot1.wav")
+    assert str(failed.value) == f"PrismAudio failed on shot1.mp4: RuntimeError: unexpected audio shape (2, 440320); " \
+                                f"log: {log}"
+    assert log.read_text(encoding="utf-8") == stderr

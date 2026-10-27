@@ -36,6 +36,7 @@ T0 = time.monotonic()
 sys.dont_write_bytecode = True  # keep the source tree free of __pycache__
 
 SAMPLE_RATE = 44100
+LATENT_SAMPLES = 64 * 32  # audio samples per VAE latent frame
 CLIP_FPS = 4
 CLIP_SIZE = 288
 SYNC_FPS = 25
@@ -537,7 +538,7 @@ def load_predict(src):
     return module
 
 
-def keep_sync_features(model, latent_length):
+def keep_sync_features(model, latents):
     """sync = "features": give the DiT the Synchformer features, as training and GRPO did.
 
     Upstream predict_step does conditioning['sync_features'][~video_exist] = empty_sync_feat on a
@@ -560,15 +561,21 @@ def keep_sync_features(model, latent_length):
     def get_conditioning_inputs(conditioning_tensors, negative=False):
         sync = kept["sync"]
         n = sync.shape[1]
-        if n < latent_length:
-            sync = F.pad(sync, (0, 0, 0, latent_length - n))
-        elif n > latent_length:
-            sync = sync[:, :latent_length]
+        if n < latents:
+            sync = F.pad(sync, (0, 0, 0, latents - n))
+        elif n > latents:
+            sync = sync[:, :latents]
         conditioning_tensors["sync_features"] = [sync, conditioning_tensors["sync_features"][1]]
         return get_inputs(conditioning_tensors, negative)
 
     conditioner.forward = forward
     model.get_conditioning_inputs = get_conditioning_inputs
+
+
+def latent_length(seconds):
+    """Latent frames for a clip, rounded up. Upstream rounds to nearest, which leaves some lengths short (10 s gets
+    215 frames, 15 ms short); the two agree wherever upstream's length covers the clip."""
+    return -(-seconds * SAMPLE_RATE // LATENT_SAMPLES)
 
 
 def generate(job, feats, device):
@@ -598,15 +605,15 @@ def generate(job, feats, device):
     if "clip_seq_len" in diffusion_config:
         diffusion_config["clip_seq_len"] = 8 * int(duration)
     if "latent_seq_len" in diffusion_config:
-        diffusion_config["latent_seq_len"] = round(44100 / 64 / 32 * duration)
+        diffusion_config["latent_seq_len"] = latent_length(seconds)
 
     model = create_model_from_config(model_config)
     model.load_state_dict(torch.load(job["weights"]["prismaudio"], map_location="cpu", weights_only=True))
     model.pretransform.load_state_dict(load_ckpt_state_dict(job["weights"]["vae"], prefix="autoencoder."))
     model.eval()
 
-    latent_length = round(44100 / 64 / 32 * duration)
-    audio = torch.zeros((1, 64, latent_length), dtype=torch.float32)
+    latents = latent_length(seconds)
+    audio = torch.zeros((1, 64, latents), dtype=torch.float32)
     meta = {key: torch.from_numpy(value) for key, value in feats.items()}
     meta.update(id="demo", relpath="demo.npz", path="demo.npz", caption_cot=job["prompt"],
                 video_exist=torch.tensor(True))
@@ -614,9 +621,9 @@ def generate(job, feats, device):
         if isinstance(value, torch.Tensor):
             meta[key] = value.to(device)
     if job["sync"] == "features":
-        keep_sync_features(model, latent_length)
+        keep_sync_features(model, latents)
 
-    log(f"sampling: latent length {latent_length}, sync {job['sync']}")
+    log(f"sampling: latent length {latents}, sync {job['sync']}")
     audio = predict.predict_step(
         model, batch=[audio, (meta,)],
         diffusion_objective=model_config["model"]["diffusion"]["diffusion_objective"], device=device)

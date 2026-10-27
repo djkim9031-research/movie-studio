@@ -100,6 +100,9 @@
 - PrismAudio runs in its own Python environment (torch and JAX for this GPU) from a pinned source commit, offline,
   while ComfyUI is down. Upstream pins torch 2.6 and flash-attn, which do not run on this card; the runner keeps
   the source unchanged and replaces what does not run here.
+- The runner rounds the audio latent length up, so every whole-second shot gets a full track. Upstream rounds to
+  nearest, which leaves about half the lengths short (of the film's 2 to 10 s: 2, 4, 6, 8 and 10 s; 10 s by
+  15 ms); for the other lengths the two are the same.
 - No music for now.
 - T5Gemma access was granted on 2026-10-27; the set is pinned at ddd0c8a6. On this card a 5 s shot takes about
   50 s (VideoPrism's JAX compile is most of it) and 13 GB of GPU memory at peak.
