@@ -145,8 +145,8 @@ models:
     files:
       - {path: face_recognition_sface_2021dec.onnx, size: 38696353, sha256: 0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79}
 
-  # Sound for films (2026-10-27): PrismAudio and its video encoder; its text encoder T5Gemma is gated and comes
-  # once access is granted. Audio only, so no faces in their outputs.
+  # Sound for films (2026-10-27): PrismAudio, its video encoder and its text encoder. Audio only, so no faces in
+  # their outputs.
   prismaudio:
     # PrismAudio (MIT): the video-to-audio model, the Stable Audio Open VAE it decodes with (Stability AI Community
     # License, non-commercial use free) and Synchformer (MIT).
@@ -166,6 +166,22 @@ models:
     biometric_outputs: allowed
     files:
       - {path: flax_lvt_large_f8r288_repeated.npz, dest: videoprism/flax_lvt_large_f8r288_repeated.npz, size: 2319542188, sha256: eb951c65a5f6b1f793a40deb3a7492a3a68b28b61e1358a893086e5e4300936b}
+  t5gemma:
+    # T5Gemma L-L UL2 instruction-tuned (Gemma Terms of Use; gated: accept them on Hugging Face first), PrismAudio's
+    # text encoder; only its encoder runs. The folder holds what transformers' from_pretrained reads.
+    repo: google/t5gemma-l-l-ul2-it
+    revision: ddd0c8a68e3b95e069b17c15e36e7fab3ae48f05
+    root: audio
+    biometric_outputs: allowed
+    files:
+      - {path: config.json, dest: t5gemma-l-l-ul2-it/config.json, size: 3155, sha256: 646ee37fd2b75362e1fc6b64fafe7a202eaeff8f70906e09f8567db1e9bf1082}
+      - {path: generation_config.json, dest: t5gemma-l-l-ul2-it/generation_config.json, size: 156, sha256: 1068b94599a94ceea097dd3936819f108c2e70806d7c6cc5ec425610af347625}
+      - {path: model.safetensors, dest: t5gemma-l-l-ul2-it/model.safetensors, size: 2483608368, sha256: 11e541762d0cb02b6d49d7af09fbfd891965654ad2b81aaad3b082a9f85bce41}
+      - {path: special_tokens_map.json, dest: t5gemma-l-l-ul2-it/special_tokens_map.json, size: 636, sha256: baec30ea10906f16adb8c18af7a34023002c1746542612b8b41c9f09e1351351}
+      - {path: tokenizer.json, dest: t5gemma-l-l-ul2-it/tokenizer.json, size: 34362429, sha256: 7794135caa3ea73918949c902a781cc61dab674a4b59c17d85931c77c1114cbd}
+      - {path: tokenizer.model, dest: t5gemma-l-l-ul2-it/tokenizer.model, size: 4241003, sha256: 61a7b147390c64585d6c3543dd6fc636906c9af3865a5548f27f31aee1d4c8e2}
+      - {path: tokenizer_config.json, dest: t5gemma-l-l-ul2-it/tokenizer_config.json, size: 46437, sha256: 9546baec0dfefec0e29873edea9488ecde153f846e18c06ea48cb44587bf408f}
+      - {path: chat_template.jinja, dest: t5gemma-l-l-ul2-it/chat_template.jinja, size: 577, sha256: 05caca2f1a27fedef588223760024ecac491ef6fe08fcaea593e11eb07b9c9c6}
 
 # ComfyUI v0.42.1 (2026-10-19, after the FLUX 3 Klein support merge); torch from the cu130 wheel index;
 # base image pinned by digest.

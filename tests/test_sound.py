@@ -28,9 +28,18 @@ def ready(cfg, monkeypatch):
 
 def test_problems_name_each_missing_piece(cfg):
     found = sound.PrismAudio().problems(cfg)
-    assert any("t5gemma" in p and "huggingface.co/google/t5gemma-l-l-ul2-it" in p for p in found)
+    assert any("t5gemma" in p and "uv run studio models fetch t5gemma" in p for p in found)
     assert any("prismaudio" in p and "uv run studio models fetch prismaudio" in p for p in found)
     assert any("worker environment" in p for p in found)
+
+
+def test_the_t5gemma_set_is_a_model_folder_where_the_runner_looks(cfg):
+    pinned = cfg.models["t5gemma"]
+    targets = {f.target for f in pinned.files}
+    needed = ("config.json", "model.safetensors", "tokenizer.json", "tokenizer.model", "tokenizer_config.json",
+              "special_tokens_map.json")
+    assert pinned.repo == "google/t5gemma-l-l-ul2-it" and cfg.model_root("t5gemma") == sound.PrismAudio.audio_root(cfg)
+    assert {f"{sound.T5GEMMA}/{name}" for name in needed} <= targets
 
 
 def test_render_runs_the_runner_offline_in_the_worker_python_and_returns_the_track(cfg, tmp_path, monkeypatch):

@@ -101,3 +101,5 @@
   while ComfyUI is down. Upstream pins torch 2.6 and flash-attn, which do not run on this card; the runner keeps
   the source unchanged and replaces what does not run here.
 - No music for now.
+- T5Gemma access was granted on 2026-10-27; the set is pinned at ddd0c8a6. On this card a 5 s shot takes about
+  50 s (VideoPrism's JAX compile is most of it) and 13 GB of GPU memory at peak.

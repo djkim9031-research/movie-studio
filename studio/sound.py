@@ -16,7 +16,6 @@ SETS = ["prismaudio", "videoprism-lvt", "t5gemma"]
 # Paths under models/audio.
 TOKENIZER = "videoprism/cc_en.32000.sentencepiece.model"
 T5GEMMA = "t5gemma-l-l-ul2-it"
-GATED = {"t5gemma": "request access at https://huggingface.co/google/t5gemma-l-l-ul2-it, then add the set"}
 
 
 class SoundError(RuntimeError):
@@ -48,7 +47,7 @@ class PrismAudio:
         found = []
         for name in SETS:
             if name not in cfg.models:
-                found.append(f"model set {name} is not in the config" + (f": {GATED[name]}" if name in GATED else ""))
+                found.append(f"model set {name} is not in the config")
                 continue
             missing = models.present(cfg, name)
             if missing:

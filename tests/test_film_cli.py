@@ -72,7 +72,7 @@ def test_film_sound_lists_what_the_worker_still_needs(setup):
     assert make(cfg_file, pictures).exit_code == 0
     result = CliRunner().invoke(app, ["--config", str(cfg_file), "film", "sound", "--name", "ride"])
     assert result.exit_code == 1
-    assert "t5gemma" in result.output and "huggingface.co/google/t5gemma-l-l-ul2-it" in result.output
+    assert "FAIL  no VideoPrism text tokenizer" in result.output and "FAIL  no worker environment" in result.output
 
 
 def test_film_sound_reports_an_unknown_film(setup):

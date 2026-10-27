@@ -206,16 +206,14 @@ commit, with downloads turned off. Set it up once:
    Hugging Face account of your token. PrismAudio reads the sound prompt with T5Gemma, and Google reviews requests
    by hand.
 
-2. Download the other weights (8 GB) and build the worker (7 GB of packages):
+2. Once access is granted, download the weights (11 GB) and build the worker (7 GB of packages):
 
    ```sh
    uv run studio models fetch prismaudio
    uv run studio models fetch videoprism-lvt
+   uv run studio models fetch t5gemma
    workers/prismaudio/setup.sh
    ```
-
-3. Once access is granted, the t5gemma model set is added to `config/studio.yaml` (its small files can only be
-   hashed after download) and fetched with `uv run studio models fetch t5gemma`.
 
 Then add sound to a film:
 
@@ -223,7 +221,8 @@ Then add sound to a film:
 uv run studio film sound --name ride
 ```
 
-It stops ComfyUI first: the worker needs the GPU, about 10 GB. If a setup step is missing, it says which.
+It stops ComfyUI first: the worker needs the GPU, about 13 GB, and takes about 50 s per shot. If a setup step is
+missing, it says which.
 
 ## What leaves the machine
 
