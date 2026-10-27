@@ -12,8 +12,10 @@ TONE = "sine=frequency=440:sample_rate=48000:duration=10,aformat=channel_layouts
 PATTERN = "testsrc2=size=1280x720:rate=24:duration=10"
 
 
-def measure(cfg: Config, *inputs: str) -> tuple[float, float | None]:
-    result = ffmpeg.run(cfg, "-nostats", *inputs, "-af", "ebur128=peak=true", "-f", "null", "-")
+def measure(cfg: Config, *inputs: str, chain: str = "") -> tuple[float, float | None]:
+    """(integrated LUFS, true peak dBFS) of the input, after the filter `chain` if one is given."""
+    meter = f"{chain},ebur128=peak=true" if chain else "ebur128=peak=true"
+    result = ffmpeg.run(cfg, "-nostats", *inputs, "-af", meter, "-f", "null", "-")
     result.check_returncode()
     return parse_ebur128_summary(result.stderr)
 

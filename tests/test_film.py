@@ -103,28 +103,47 @@ class FakeWorker:
         return self.missing
 
     def render(self, cfg, *, clip, prompt, seconds, seed, dest):
-        self.calls.append((clip.name, prompt, seconds, seed))
+        self.calls.append((clip, prompt, seconds, seed))
         dest.write_bytes(b"wav")
         return SimpleNamespace(elapsed_s=3.0)
 
 
-def test_add_sound_makes_a_track_per_shot_from_its_prompt_then_mixes_them(cfg, tmp_path, renders, monkeypatch):
+SHOT_MIX = {"lufs_made": -24.0, "gain_db": 8.0, "stereo": "narrowed", "width": 0.8, "correlation_before": -0.2,
+            "correlation_after": 0.1, "lufs": -16.1}
+
+
+def test_add_sound_makes_each_track_with_handles_then_mixes_them(cfg, tmp_path, renders, monkeypatch):
     make(cfg, tmp_path, FakeClaude(plan(3)))
-    mixed = []
+    padded, mixed, said = [], [], []
+
+    def padded_clip(cfg, clip, out, *, seconds, fps):
+        padded.append((clip.name, seconds, fps))
+        out.write_bytes(b"padded")
+        return out
 
     def with_sound(cfg, silent, tracks, out, *, seconds):
         mixed.append((silent.name, [t.name for t in tracks], out.name, seconds))
         out.write_bytes(b"film with sound")
+        return {"lufs": -16.0, "true_peak": -1.8, "gain_db": 0.4, "shots": [SHOT_MIX] * 3}
 
+    monkeypatch.setattr("studio.film.assemble.padded_clip", padded_clip)
     monkeypatch.setattr("studio.film.assemble.with_sound", with_sound)
     worker = FakeWorker()
-    data = film.add_sound(cfg, name="ride", worker=worker, echo=print, seed=40)
-    assert worker.calls == [(f"shot{n}.mp4", plan(3)["shots"][n - 1]["sound_prompt"], 5, 40 + n) for n in (1, 2, 3)]
+    data = film.add_sound(cfg, name="ride", worker=worker, echo=said.append, seed=40)
+    # The worker hears each shot from its padded clip, 0.5 s longer at both ends: 5 s shots become 6 s tracks.
+    assert padded == [(f"shot{n}.mp4", 5, 16) for n in (1, 2, 3)]
+    assert not any(c.exists() for c, *_ in worker.calls)  # the padded clips are temporary
+    assert [(c.name, p, s, seed) for c, p, s, seed in worker.calls] == \
+        [(f"shot{n}.mp4", plan(3)["shots"][n - 1]["sound_prompt"], 6, 40 + n) for n in (1, 2, 3)]
     assert mixed == [("film.mp4", ["shot1.wav", "shot2.wav", "shot3.wav"], "film-sound.mp4", 5)]
-    assert data["sound"]["film"] == "film-sound.mp4" and data["shots"][0]["sound"] == "sound/shot1.wav"
+    assert data["sound"]["film"] == "film-sound.mp4" and data["sound"]["true_peak"] == -1.8
+    assert data["sound"]["shots"][0]["stereo"] == "narrowed" and data["shots"][0]["sound"] == "sound/shot1.wav"
     track = json.loads(provenance.sidecar(cfg.projects_dir / "films" / "ride" / "sound" / "shot1.wav").read_text())
     assert [m["set"] for m in track["models"]] == ["prismaudio"] and track["inputs"][0]["path"].endswith("shot1.mp4")
+    assert track["params"]["handle_s"] == 0.5 and track["params"]["seconds"] == 5
     assert "film-sound.mp4" in (cfg.projects_dir / "films" / "ride" / "review.html").read_text()
+    assert any("shot 3: -16.1 LUFS in the film" in line and "stereo narrowed" in line for line in said)
+    assert any("film -16.0 LUFS, true peak -1.8 dBTP" in line for line in said)
 
 
 def test_add_sound_refuses_when_the_worker_is_not_ready(cfg, tmp_path, renders):

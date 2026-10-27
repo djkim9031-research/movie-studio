@@ -100,6 +100,11 @@
 - PrismAudio runs in its own Python environment (torch and JAX for this GPU) from a pinned source commit, offline,
   while ComfyUI is down. Upstream pins torch 2.6 and flash-attn, which do not run on this card; the runner keeps
   the source unchanged and replaces what does not run here.
+- The mix (2026-10-27): PrismAudio normalizes each track's peak on its own, which left shots 12 dB apart, one shot
+  cancelling 5 dB in mono and the film's true peak over -1.5 dBTP after AAC. Each track is now made 0.5 s longer at
+  both ends (the shot's first and last frames held), every shot gets one gain to the same level, a track below 0
+  correlation is narrowed (inverted below -0.5), shots crossfade over 0.5 s centred on each cut, and a 4x
+  oversampled limiter at -2 dBTP plus a measured second encode keep the AAC under -1.5 dBTP.
 - The runner rounds the audio latent length up, so every whole-second shot gets a full track. Upstream rounds to
   nearest, which leaves about half the lengths short (of the film's 2 to 10 s: 2, 4, 6, 8 and 10 s; 10 s by
   15 ms); for the other lengths the two are the same.

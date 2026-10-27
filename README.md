@@ -201,7 +201,7 @@ The film is silent: Wan 2.2 makes no sound. The shot plan already holds a sound 
 - `refs/`: the references as used
 - `stills/shotN.png` and `stills/shotN.graph.json`: each shot's still and the ComfyUI graph that drew it
 - `clips/shotN.mp4`: each shot's clip, silent
-- `sound/shotN.wav`: each shot's sound track, once sound is added
+- `sound/shotN.wav`: each shot's sound track, once sound is added; 0.5 s longer at both ends for the crossfades
 - `film.mp4`: the shots joined; `film-sound.mp4` once sound is added
 - `film.json`: the prompt, the title, every prompt Claude wrote, seeds, timings and model versions
 - `review.html`: the page to watch it all; it shows real people, so keep it to yourself
@@ -212,7 +212,16 @@ Every still, clip and film has a `.prov.json` record beside it: its sha256, the 
 
 Wan makes no sound, so a film gets its sound in a second step: PrismAudio watches each finished clip and makes a
 44.1 kHz stereo track from the shot's sound prompt (hooves, wind, cloth, the ambience of the place; no music or
-voices). The tracks are fitted to the shots, joined, brought to -16 LUFS and written as `film-sound.mp4`.
+voices). Each track is made 0.5 s longer at both ends (from the shot's first and last frames held), so the mix can
+crossfade without moving any sound:
+
+- every shot is brought to one level;
+- a track whose left and right would cancel in mono has its stereo narrowed, or its right channel inverted when it
+  is mostly out of phase;
+- neighbouring shots crossfade over 0.5 s centred on each cut;
+- the film is brought to -16 LUFS with its true peak under -1.5 dBTP after AAC, and written as `film-sound.mp4`.
+
+`film sound` prints each shot's level and stereo fix and the film's loudness and true peak; `film.json` keeps them.
 
 PrismAudio runs in its own Python environment (Python 3.11 with PyTorch and JAX for this GPU), from a pinned source
 commit, with downloads turned off. Set it up once:

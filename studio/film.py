@@ -109,7 +109,8 @@ def make(cfg: Config, *, name: str, prompt: str, pictures: list[Path], shots: in
 
 
 def add_sound(cfg: Config, *, name: str, worker, echo, seed: int | None = None) -> dict:
-    """One track per shot from its clip and sound prompt, then the film again with the tracks mixed in."""
+    """One track per shot from its clip and sound prompt, made assemble.HANDLE seconds longer at both ends so the
+    mix can crossfade at the cuts, then the film again with the tracks mixed in."""
     folder, data = load(cfg, name)
     if not data.get("film"):
         raise FilmError(f"film {data['name']} has no finished picture yet")
@@ -118,21 +119,31 @@ def add_sound(cfg: Config, *, name: str, worker, echo, seed: int | None = None) 
         raise FilmError(f"the sound worker is not ready: {'; '.join(problems)}")
     base = seed if seed is not None else secrets.randbelow(2**31 - 100)
     sound_dir = private_dir(folder / "sound")
-    for shot in data["shots"]:
-        n = shot["n"]
-        dest = sound_dir / f"shot{n}.wav"
-        made = worker.render(cfg, clip=folder / shot["clip"], prompt=shot["sound_prompt"], seconds=data["seconds"],
-                             seed=base + n, dest=dest)
-        provenance.write(cfg, dest, kind="sound", models=worker.models, inputs=[folder / shot["clip"]],
-                         params={"seed": base + n, "seconds": data["seconds"]})
-        shot.update(sound=f"sound/{dest.name}", sound_seed=base + n, sound_s=round(made.elapsed_s, 1))
-        _save(folder, data)
-        echo(f"sound {n}/{len(data['shots'])}  seed {base + n}, {made.elapsed_s:.1f} s -> {dest}")
+    seconds = data["seconds"]
+    with tempfile.TemporaryDirectory() as tmp:
+        for shot in data["shots"]:
+            n = shot["n"]
+            dest = sound_dir / f"shot{n}.wav"
+            clip = folder / shot["clip"]
+            padded = assemble.padded_clip(cfg, clip, Path(tmp) / clip.name, seconds=seconds, fps=data["fps"])
+            made = worker.render(cfg, clip=padded, prompt=shot["sound_prompt"],
+                                 seconds=seconds + int(2 * assemble.HANDLE), seed=base + n, dest=dest)
+            padded.unlink()
+            provenance.write(cfg, dest, kind="sound", models=worker.models, inputs=[clip],
+                             params={"seed": base + n, "seconds": seconds, "handle_s": assemble.HANDLE})
+            shot.update(sound=f"sound/{dest.name}", sound_seed=base + n, sound_s=round(made.elapsed_s, 1))
+            _save(folder, data)
+            echo(f"sound {n}/{len(data['shots'])}  seed {base + n}, {made.elapsed_s:.1f} s -> {dest}")
     out = folder / "film-sound.mp4"
-    assemble.with_sound(cfg, folder / data["film"], [folder / s["sound"] for s in data["shots"]], out,
-                        seconds=data["seconds"])
-    data["sound"] = {"film": out.name, "lufs": assemble.TARGET_LUFS, "true_peak": assemble.TRUE_PEAK}
+    mix = assemble.with_sound(cfg, folder / data["film"], [folder / s["sound"] for s in data["shots"]], out,
+                              seconds=seconds)
+    data["sound"] = {"film": out.name, **mix}
     _save(folder, data)
+    for n, s in enumerate(mix["shots"], start=1):
+        echo(f"mix   shot {n}: {s['lufs']:.1f} LUFS in the film (made at {s['lufs_made']:.1f}, gain "
+             f"{s['gain_db']:+.1f} dB), stereo {s['stereo']}, correlation {s['correlation_before']:+.2f} -> "
+             f"{s['correlation_after']:+.2f}")
+    echo(f"mix   film {mix['lufs']:.1f} LUFS, true peak {mix['true_peak']:.1f} dBTP after AAC")
     return data
 
 
