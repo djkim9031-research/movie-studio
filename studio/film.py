@@ -22,6 +22,7 @@ from studio.stills import LANDSCAPE, PORTRAIT, render_still
 
 VIDEO = "wan-4step-1022"
 FPS = 16  # Wan 2.2's frame rate
+MODEL_SETS = ["face-detect", "face-id", "flux3-klein", *bench.VARIANTS[VIDEO]["models"]]
 
 
 class FilmError(RuntimeError):

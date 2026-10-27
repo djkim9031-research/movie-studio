@@ -34,18 +34,27 @@ saved next to it as `stillN.graph.json`.
 
 ## What you need
 
-- Linux with an NVIDIA GPU of 48 GB or more and driver 580 or newer. Tested on an RTX PRO 5000 72 GB (Blackwell):
-  stills peaked at 38 GiB of GPU memory and clips at 43 GiB.
-- Docker 24 or newer with the NVIDIA Container Toolkit 1.17 or newer (tested with 1.20.1).
+- Linux with an NVIDIA GPU of 72 GB or more (the only size tested) and driver 580 or newer. The GPU steps start only
+  when 60 GiB of GPU memory is free (`gpu.min_free_gib` in `config/studio.yaml`). On an RTX PRO 5000 72 GB
+  (Blackwell), stills peaked at 42 GiB, scene clips at 43 GiB and the sound worker at 13 GiB; film clips used 70 GiB,
+  as ComfyUI keeps models on the GPU while there is room.
+- RAM: tested with 124 GB. At peak the sound worker used 16 GiB and ComfyUI 6 GiB, besides the page cache that holds
+  the model files.
+- Docker 24 or newer, usable without sudo, with the NVIDIA Container Toolkit 1.17 or newer (tested with 1.20.1).
 - [uv](https://docs.astral.sh/uv/), the tool that installs this project's Python packages and runs its commands.
   Install it with `curl -LsSf https://astral.sh/uv/install.sh | sh`.
-- About 150 GB of free disk for scenes: 81 GB of model weights, an 11 GB image, room for results. Films add
-  69 GB for Wan 2.2, and their sound about 20 GB more (weights and the sound worker's environment).
-- An Anthropic API key. Claude Opus 5.5 writes the two prompts of a scene for about $0.03.
+- Disk: 81 GB of model weights for scenes, 73 GB more for films and 19 GB more for their sound (weights and the sound
+  worker's environment), an 11 GB image in Docker's folder, and room for results. `studio doctor` and
+  `studio models fetch` keep 300 GB free on the disk of your home folder (`disk.home_min_free_gb` in
+  `config/studio.yaml`), so with that default start with about 475 GB free, or lower the floor.
+- An Anthropic API key. Claude Opus 5.5 writes the two prompts of a scene for about $0.03 and a film's shot plan for
+  about $0.08.
 - A Hugging Face read token, after accepting the licenses of
   [Lightricks/LTX-2.5](https://huggingface.co/Lightricks/LTX-2.5) and
   [black-forest-labs/flux-3-image-klein-comfy](https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy)
-  on huggingface.co with the same account.
+  on huggingface.co with the same account. For film sound, also request access to
+  [google/t5gemma-l-l-ul2-it](https://huggingface.co/google/t5gemma-l-l-ul2-it); Google reviews requests by hand, so
+  ask early.
 
 ## Setup
 
@@ -92,6 +101,8 @@ saved next to it as `stillN.graph.json`.
    uv run studio models fetch face-id
    ```
 
+   `ltx25-int8` is used only by scenes and `make-video`; skip it if you only make films.
+
 5. Build the ComfyUI image (pinned ComfyUI commit, CUDA 13.0, PyTorch and every other package from a hashed lock):
 
    ```sh
@@ -137,6 +148,9 @@ and the kind of motion; Claude turns it into the detailed prompts the models nee
 
 ## Make a film
 
+For a film with sound, set up once: Setup above, step 1 below and the sound worker (Sound, below). Then each film is
+two commands: `studio film make` (step 2) for the picture and `studio film sound` for its sound.
+
 ```
 your photos + pictures of places or things + a prompt
   |
@@ -153,7 +167,7 @@ your photos + pictures of places or things + a prompt
 projects/films/NAME/film.mp4 and review.html
 ```
 
-1. Download the video models once (69 GB):
+1. Download the video models once (73 GB):
 
    ```sh
    uv run studio models fetch wan22-i2v
@@ -168,11 +182,11 @@ projects/films/NAME/film.mp4 and review.html
      ~/pictures/palace
    ```
 
-   Four shots take about 25 minutes: a minute and a half per still, three minutes per clip, and the model loads.
-   Claude's shot plan costs about $0.10.
+   Four shots take about 25 minutes: two and a half minutes per still, three per clip, and the model loads.
+   Claude's shot plan costs about $0.08.
 
-3. Open `~/studio-data/projects/films/ride/review.html`: the film at the top, then each shot's still, clip and
-   prompts.
+3. Open `~/studio-data/projects/films/ride/review.html`: the film at the top (with sound, once added), then each
+   shot's still, clip and prompts.
 
 Options: `--shots N` (3 to 6), `--seconds N` per shot (Wan 2.2 is trained on 5; longer shots are possible but may
 repeat motion), `--portrait`, `--keep-up`. A name is used once; pick a new one for another take.
@@ -187,6 +201,7 @@ The film is silent: Wan 2.2 makes no sound. The shot plan already holds a sound 
 - `refs/`: the references as used
 - `stills/shotN.png` and `stills/shotN.graph.json`: each shot's still and the ComfyUI graph that drew it
 - `clips/shotN.mp4`: each shot's clip, silent
+- `sound/shotN.wav`: each shot's sound track, once sound is added
 - `film.mp4`: the shots joined; `film-sound.mp4` once sound is added
 - `film.json`: the prompt, the title, every prompt Claude wrote, seeds, timings and model versions
 - `review.html`: the page to watch it all; it shows real people, so keep it to yourself
@@ -215,13 +230,16 @@ commit, with downloads turned off. Set it up once:
    workers/prismaudio/setup.sh
    ```
 
+   `setup.sh` builds the worker in `~/studio-data/workers/prismaudio`. If you moved `data_root`, run it as
+   `STUDIO_DATA=/your/data/root workers/prismaudio/setup.sh`.
+
 Then add sound to a film:
 
 ```sh
 uv run studio film sound --name ride
 ```
 
-It stops ComfyUI first: the worker needs the GPU, about 13 GB, and takes about 50 s per shot. If a setup step is
+It stops ComfyUI first: the worker needs the GPU, about 13 GB, and takes about a minute per shot. If a setup step is
 missing, it says which.
 
 ## What leaves the machine

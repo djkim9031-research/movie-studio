@@ -647,7 +647,7 @@ def film_make(pictures: list[Path] = typer.Argument(..., help="A folder of pictu
     """References from your pictures, a shot plan from Claude (text only), then a FLUX 3 Klein still and a Wan 2.2
     clip per shot, joined into one silent MP4."""
     cfg = _state["cfg"]
-    _models_or_exit(cfg, ["face-detect", "face-id", "flux3-klein", *bench.VARIANTS[film.VIDEO]["models"]])
+    _models_or_exit(cfg, film.MODEL_SETS)
     try:
         made = film.make(cfg, name=name, prompt=prompt, pictures=pictures, shots=shots, seconds=seconds,
                          portrait=portrait, claude=Claude(cfg), tools=face_tools(cfg), echo=typer.echo,
