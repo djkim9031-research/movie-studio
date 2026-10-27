@@ -51,14 +51,8 @@ def _models(cfg: Config) -> dict:
             (("stills", "flux3-klein"), ("clips", "ltx25-int8")) if name in cfg.models}
 
 
-def make_stills(cfg: Config, *, name: str, prompt: str, pictures: list[Path], count: int, portrait: bool, claude,
-                tools, echo, gpu=contextlib.nullcontext) -> dict:
-    """References and prompts first (no GPU), then `count` stills inside `gpu()`."""
-    name = clean_name(name)
-    folder = scene_dir(cfg, name)
-    # A folder without scene.json is a run that stopped before its prompts were written; it may run again.
-    if (folder / "scene.json").exists():
-        raise SceneError(f"scene {name} exists in {folder}; pick another name")
+def references(pictures: list[Path], folder: Path, tools, echo) -> refs.Report:
+    """The usable pictures as references in folder/refs, each one reported."""
     try:
         pictures, unreadable = refs.gather(pictures)
     except ValueError as error:
@@ -76,6 +70,18 @@ def make_stills(cfg: Config, *, name: str, prompt: str, pictures: list[Path], co
         echo(f"refs  skipped {source}: {reason}")
     if not report.used:
         raise SceneError("none of the pictures can be used")
+    return report
+
+
+def make_stills(cfg: Config, *, name: str, prompt: str, pictures: list[Path], count: int, portrait: bool, claude,
+                tools, echo, gpu=contextlib.nullcontext) -> dict:
+    """References and prompts first (no GPU), then `count` stills inside `gpu()`."""
+    name = clean_name(name)
+    folder = scene_dir(cfg, name)
+    # A folder without scene.json is a run that stopped before its prompts were written; it may run again.
+    if (folder / "scene.json").exists():
+        raise SceneError(f"scene {name} exists in {folder}; pick another name")
+    report = references(pictures, folder, tools, echo)
     orientation = "portrait" if portrait else "landscape"
     size = PORTRAIT if portrait else LANDSCAPE
     prompts = scene_prompts.write(claude, film=f"scene-{name}", user_prompt=prompt, report=report,

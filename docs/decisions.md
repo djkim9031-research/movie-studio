@@ -81,3 +81,23 @@
   too turned or too small as unscored rather than failed.
 - Next: a second scorer (AuraFace), head-angle calibration and a real target from the user's own phone clips, a
   fixed bench of start photos and motions, then video settings and engines compared on it.
+
+## 2026-10-27: films and their sound
+
+- `studio film make` turns a picture folder and a prompt into a short film: Claude plans 3 to 6 shots (route
+  film_prompts, text only, structured output), each shot gets one FLUX 3 Klein still and one Wan 2.2 clip
+  (4-step lightx2v 1022 LoRAs, 5 s, 16 fps), and FFmpeg joins them with hard cuts. Every still is drawn before the
+  first clip, so the GPU swaps models once.
+- Each still request repeats the person, clothes, place and light in full: the image model sees one shot at a time.
+- Sound is a second step, `studio film sound`, on a finished film: PrismAudio (FunAudioLLM, MIT weights) makes a
+  44.1 kHz stereo track per shot from the clip and the shot's sound prompt; the tracks are fitted to the shots,
+  joined, normalized in two passes to -16 LUFS / -1.5 dBTP and encoded as AAC 48 kHz.
+- PrismAudio's parts: VideoPrism LvT (Apache-2.0, JAX), T5Gemma (Gemma Terms of Use, gated on Hugging Face),
+  Synchformer (MIT) and the Stable Audio Open VAE (Stability AI Community License: non-commercial use free).
+- Not used: MMAudio, the best measured (FoleyBench), because it needs Apple's DFN5B CLIP, licensed for scientific
+  research only; HunyuanVideo-Foley, because its license bars use and display of its outputs in the EU, UK and
+  South Korea.
+- PrismAudio runs in its own Python environment (torch and JAX for this GPU) from a pinned source commit, offline,
+  while ComfyUI is down. Upstream pins torch 2.6 and flash-attn, which do not run on this card; the runner keeps
+  the source unchanged and replaces what does not run here.
+- No music for now.

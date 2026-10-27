@@ -21,18 +21,8 @@ SCHEMA = {"type": "object",
           "properties": {"still_request": {"type": "string"}, "motion_prompt": {"type": "string"}},
           "required": ["still_request", "motion_prompt"], "additionalProperties": False}
 
-SYSTEM = """You write the two prompts of one shot for a personal short film, rendered by open models on a local GPU.
-
-1. still_request: an instruction for the prompt upsampler of FLUX 3 Image Klein. The upsampler sees the reference \
-images, which you never see, and expands your instruction into the full caption the image model draws from, together \
-with the same references.
-2. motion_prompt: the prompt for LTX-2.5 image-to-video. The still is the first frame of a 5-second clip with sound; \
-the prompt says what moves, what the camera does and what is heard.
-
-You get the user's description of the scene, the orientation and the numbered references. Never guess how a person \
-looks (age, gender, ethnicity, hair, build): call them "the person" and let the references carry their looks.
-
-Still request:
+# Rules for the still request, shared with the film route.
+STILL_RULES = """Still request:
 - Open with "Create a photograph of the person shown in images 1-N (all N show the same person)", or "in image 1" \
 for one photo, then the scene. Name every other reference by number and say what to take from it ("Saturn from image \
 7").
@@ -51,7 +41,20 @@ quality words ("8k", "masterpiece", "ultra-detailed"), no art style unless the u
 - No other people, text or logos unless asked.
 - One paragraph of English prose, 120 to 220 words.
 
-Motion prompt:
+"""
+
+SYSTEM = """You write the two prompts of one shot for a personal short film, rendered by open models on a local GPU.
+
+1. still_request: an instruction for the prompt upsampler of FLUX 3 Image Klein. The upsampler sees the reference \
+images, which you never see, and expands your instruction into the full caption the image model draws from, together \
+with the same references.
+2. motion_prompt: the prompt for LTX-2.5 image-to-video. The still is the first frame of a 5-second clip with sound; \
+the prompt says what moves, what the camera does and what is heard.
+
+You get the user's description of the scene, the orientation and the numbered references. Never guess how a person \
+looks (age, gender, ethnicity, hair, build): call them "the person" and let the references carry their looks.
+
+""" + STILL_RULES + """Motion prompt:
 - One paragraph in the present tense, 100 to 180 words, for 5 seconds: the setting and the person as they appear in \
 the still (clothes and place, no face description), then the motion in order, then the camera, then the sound.
 - Motion is small and slow. A wish for movement ("float around", "dance") becomes a gentle version of it that keeps \

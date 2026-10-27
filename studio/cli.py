@@ -10,7 +10,7 @@ import anthropic
 import typer
 from pydantic import ValidationError
 
-from studio import bench, blind, cast, identity, keyframe_bench, models, provenance, refs, scene
+from studio import bench, blind, cast, film, identity, keyframe_bench, models, provenance, refs, scene, sound
 from studio.claude.client import Claude, CredentialsError, Refused
 from studio.claude.ledger import BudgetExceeded, Ledger, summarize
 from studio.config import Config, load_config
@@ -19,7 +19,7 @@ from studio.fs import private_dir, write_private
 from studio.gpu import runtime
 from studio.gpu.comfy import RenderError, WorkflowError
 from studio.gpu.preflight import run_preflight
-from studio.media import ffmpeg
+from studio.media import assemble, ffmpeg
 from studio.media.smoke import TARGET_LUFS, smoke_mux
 from studio.render import LANDSCAPE, image_size, prepare_still, render_i2v, target_size
 from studio.scene_prompts import PromptError
@@ -41,6 +41,9 @@ bench_app = typer.Typer(no_args_is_help=True, help="Fixed benches that measure v
 app.add_typer(bench_app, name="bench")
 cast_app = typer.Typer(no_args_is_help=True, help="A person's capture: photos and videos in cast/ALIAS.")
 app.add_typer(cast_app, name="cast")
+film_app = typer.Typer(no_args_is_help=True, help="A short film from a prompt and pictures: Claude's shot plan, one "
+                                                  "still and one Wan clip per shot, one MP4; sound added after.")
+app.add_typer(film_app, name="film")
 RENDER_TEST_PROMPT = ("A slow push-in toward a misty pond at morning. Fog drifts low across the water, willow "
                       "leaves and tall meadow grass sway in a light breeze, soft sunlight. Quiet outdoor ambience: "
                       "light wind and distant birds.")
@@ -625,3 +628,63 @@ def scene_compare(names: list[str] = typer.Argument(..., help="Scene names, side
     out = cfg.projects_dir / "scenes" / f"compare-{'-'.join(scene.clean_name(n) for n in names)}.html"
     write_private(out, page)
     typer.echo(f"PASS  page: {out}")
+
+
+FILM_ERRORS = (*SCENE_ERRORS, film.FilmError, assemble.AssemblyError, sound.SoundError)
+SOUND_FREE_GIB = 24  # PrismAudio with its JAX and torch encoders, with room to spare
+
+
+@film_app.command("make")
+def film_make(pictures: list[Path] = typer.Argument(..., help="A folder of pictures, or picture files: photos of the "
+                                                              "person and pictures of places or things."),
+              prompt: str = typer.Option(..., help="The film in your words: place, look, what happens."),
+              name: str = typer.Option(..., help="Film name; its folder is projects/films/NAME."),
+              shots: int = typer.Option(4, min=3, max=6, help="How many shots Claude plans."),
+              seconds: int = typer.Option(5, min=2, max=10, help="Shot length in whole seconds; Wan 2.2 is trained "
+                                                                 "on 5."),
+              portrait: bool = typer.Option(False, "--portrait", help="9:16 instead of 16:9."),
+              keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
+    """References from your pictures, a shot plan from Claude (text only), then a FLUX 3 Klein still and a Wan 2.2
+    clip per shot, joined into one silent MP4."""
+    cfg = _state["cfg"]
+    _models_or_exit(cfg, ["face-detect", "face-id", "flux3-klein", *bench.VARIANTS[film.VIDEO]["models"]])
+    try:
+        made = film.make(cfg, name=name, prompt=prompt, pictures=pictures, shots=shots, seconds=seconds,
+                         portrait=portrait, claude=Claude(cfg), tools=face_tools(cfg), echo=typer.echo,
+                         gpu=lambda: _comfy_session(cfg, keep_up))
+    except FILM_ERRORS as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    folder = film.film_dir(cfg, made["name"])
+    typer.echo(f'PASS  "{made["title"]}", {len(made["shots"])} shots; film: {folder / made["film"]}')
+    typer.echo(f"      review: {folder / 'review.html'}")
+    typer.echo(f"      sound: uv run studio film sound --name {made['name']} (once the sound worker is set up)")
+
+
+@film_app.command("sound")
+def film_sound(name: str = typer.Option(..., help="Film name."),
+               seed: int = typer.Option(None, help="Seed of shot 1's track; shot N uses seed + N - 1. Random when "
+                                                   "omitted.")):
+    """A PrismAudio track per shot from its clip and sound prompt, mixed to -16 LUFS into film-sound.mp4."""
+    cfg = _state["cfg"]
+    worker = sound.PrismAudio()
+    try:
+        film.load(cfg, name)
+        problems = worker.problems(cfg)
+        if problems:
+            for problem in problems:
+                typer.echo(f"FAIL  {problem}")
+            raise typer.Exit(1)
+        # The worker needs the GPU: our ComfyUI goes down first, and nothing else may hold it.
+        if runtime.is_running():
+            runtime.down(cfg)
+        verdict = run_preflight(cfg.gpu.agent_service, min_free_gib=SOUND_FREE_GIB)
+        if not verdict.ok:
+            typer.echo("FAIL  " + "; ".join(verdict.problems))
+            raise typer.Exit(1)
+        made = film.add_sound(cfg, name=name, worker=worker, echo=typer.echo,
+                              seed=None if seed is None else seed - 1)
+    except FILM_ERRORS as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    typer.echo(f"PASS  {film.film_dir(cfg, made['name']) / made['sound']['film']}")

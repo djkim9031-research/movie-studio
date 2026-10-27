@@ -4,6 +4,7 @@ claude:
   routes:
     doctor: {model: claude-opus-5-5, effort: low}
     scene_prompts: {model: claude-opus-5-5, effort: medium}
+    film_prompts: {model: claude-opus-5-5, effort: high}
   # USD per million tokens, list prices of 2026-10. Cache writes cost input x 1.25 (5 min) or x 2 (1 h).
   # claude-opus-5 and claude-opus-4-8 are the server-side fallback targets for claude-opus-5-5.
   prices:
@@ -143,6 +144,28 @@ models:
     biometric_outputs: allowed
     files:
       - {path: face_recognition_sface_2021dec.onnx, size: 38696353, sha256: 0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79}
+
+  # Sound for films (2026-10-27): PrismAudio and its video encoder; its text encoder T5Gemma is gated and comes
+  # once access is granted. Audio only, so no faces in their outputs.
+  prismaudio:
+    # PrismAudio (MIT): the video-to-audio model, the Stable Audio Open VAE it decodes with (Stability AI Community
+    # License, non-commercial use free) and Synchformer (MIT).
+    repo: FunAudioLLM/PrismAudio
+    revision: d1a33add3f936ba35bf1bd6a86d34ef991ba604f
+    root: audio
+    biometric_outputs: allowed
+    files:
+      - {path: prismaudio.ckpt, dest: prismaudio/prismaudio.ckpt, size: 2697789718, sha256: 9f85d728697f18eafc030952c40ea946e8e4d15f0f884fad94a1061acdf2f51d}
+      - {path: vae.ckpt, dest: prismaudio/vae.ckpt, size: 2521255758, sha256: 8132c32ec65bbba2f1457f2659136c5f2cb31f9902af1c659d78c9f7d3aa619e}
+      - {path: synchformer_state_dict.pth, dest: prismaudio/synchformer_state_dict.pth, size: 950058171, sha256: 8aff082f2df5c3bc52759db0c865c7ee772ae6400b860d1b7e90413f2defb67c}
+  videoprism-lvt:
+    # VideoPrism LvT large (Apache-2.0), PrismAudio's video and text encoder, in JAX.
+    repo: google/videoprism-lvt-large-f8r288
+    revision: 1eda021e2bae000eaae7f763bb9b50d65bdda6af
+    root: audio
+    biometric_outputs: allowed
+    files:
+      - {path: flax_lvt_large_f8r288_repeated.npz, dest: videoprism/flax_lvt_large_f8r288_repeated.npz, size: 2319542188, sha256: eb951c65a5f6b1f793a40deb3a7492a3a68b28b61e1358a893086e5e4300936b}
 
 # ComfyUI v0.42.1 (2026-10-19, after the FLUX 3 Klein support merge); torch from the cu130 wheel index;
 # base image pinned by digest.
