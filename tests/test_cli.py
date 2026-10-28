@@ -1,3 +1,6 @@
+import signal
+import subprocess
+import sys
 from datetime import datetime
 
 from typer.testing import CliRunner
@@ -147,3 +150,13 @@ def test_gpu_up_and_make_video_report_a_busy_gpu_in_one_line(tmp_path, monkeypat
         result = CliRunner().invoke(app, ["--config", str(cfg_file), *args])
         assert result.exit_code == 1 and isinstance(result.exception, SystemExit), args
         assert f"FAIL  GPU not free: {busy}" in result.output
+
+
+def test_a_kill_leaves_through_the_cleanup_of_the_command_it_stops(tmp_path):
+    marker = tmp_path / "cleaned"
+    code = ("import time\nfrom studio import cli\ncli.exit_on_kill()\ntry:\n    print('ready', flush=True)\n"
+            f"    time.sleep(30)\nfinally:\n    open({str(marker)!r}, 'w').write('done')\n")
+    proc = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True)
+    assert proc.stdout.readline().strip() == "ready"
+    proc.send_signal(signal.SIGTERM)
+    assert proc.wait(timeout=20) == 128 + signal.SIGTERM and marker.read_text() == "done"

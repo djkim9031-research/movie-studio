@@ -2,6 +2,8 @@ import contextlib
 import json
 import re
 import secrets
+import signal
+import sys
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -50,8 +52,15 @@ RENDER_TEST_PROMPT = ("A slow push-in toward a misty pond at morning. Fog drifts
 _state: dict[str, Config] = {}
 
 
+def exit_on_kill() -> None:
+    """A kill (SIGTERM) leaves the way Ctrl+C does, through each command's cleanup: copies of pictures removed from
+    ComfyUI's folders, the container stopped."""
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+
+
 @app.callback()
 def main(config: Path = typer.Option(None, "--config", help="Config file; default config/studio.yaml.")):
+    exit_on_kill()
     _state["cfg"] = load_config(config)
 
 
