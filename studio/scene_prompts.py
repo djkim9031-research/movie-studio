@@ -21,7 +21,7 @@ SCHEMA = {"type": "object",
           "properties": {"still_request": {"type": "string"}, "motion_prompt": {"type": "string"}},
           "required": ["still_request", "motion_prompt"], "additionalProperties": False}
 
-# Rules for the still request, shared with the film route.
+# Rules for the still request of a scene: one still, so the face stays large and toward the camera for likeness.
 STILL_RULES = """Still request:
 - Open with "Create a photograph of the person shown in images 1-N (all N show the same person)", or "in image 1" \
 for one photo, then the scene. Name every other reference by number and say what to take from it ("Saturn from image \

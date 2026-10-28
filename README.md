@@ -157,7 +157,8 @@ your photos + pictures of places or things + a prompt
   1. references (CPU)    as for a scene: up to 6 face crops of the person, other pictures whole
   |
   2. shot plan (Claude)  your words -> a title and 3-6 shots, each with a still request, a motion prompt and a
-  |                      sound prompt; Claude gets text only
+  |                      sound prompt; Claude gets text only, and a plan that breaks a checked rule goes back
+  |                      to it, at most twice
   3. stills (FLUX 3      one 1920x1088 still per shot from the references
   |   Image Klein)
   4. clips (Wan 2.2)     each still becomes a 5 s clip at 1280x704, 16 fps (4-step lightx2v LoRAs); every still is
@@ -183,7 +184,9 @@ projects/films/NAME/film.mp4 and review.html
    ```
 
    Four shots take about 25 minutes: two and a half minutes per still, three per clip, and the model loads.
-   Claude's shot plan costs about $0.08.
+   Claude's shot plan costs about $0.08, up to three times that when it is sent back. Claude stages the shots from
+   your words: the person looks at what happens (wide shots from behind, reaction shots at three quarters), not into
+   the lens unless you ask.
 
 3. Open `~/studio-data/projects/films/ride/review.html`: the film at the top (with sound, once added), then each
    shot's still, clip and prompts.

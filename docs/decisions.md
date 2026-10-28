@@ -119,3 +119,20 @@
   context for NVENC while a client is connected, so `gpu.display_processes` names it. Its memory counts against the
   free-memory floor like the display's.
 - A busy GPU stops a command with one FAIL line that names each process.
+
+## 2026-10-27: film direction
+
+- The first meteor film showed the film's rules working against the story: the scene flow's still rules (the face
+  large and toward the camera, for likeness) kept the person facing the lens with the event behind them, the motion
+  rules froze the first frame's expression, and BFL's upsampler turned "shocked" and "frightened" into wide eyes,
+  raised brows and an open mouth. The film now has its own rules; the scene flow keeps its likeness rule.
+- Shots are staged from the story: the person looks at what happens, in wide or over-the-shoulder shots from behind
+  and reaction shots at three quarters, never into the lens unless asked. Expressions are understated and shown in
+  the body; the mouth stays closed.
+- Clothes and the view are written in the same words in every still request, and a picture of other people serves
+  only for the place or a prop: from one such picture the upsampler described three different outfits across four
+  shots. Far events stay small on the horizon and grow from shot to shot.
+- Sound prompts name only what is heard. Every prompt of that film ended with "Avoid music, voices, speech...", and
+  PrismAudio makes what it reads.
+- The code checks a plan for gaze at the camera, strong expression words and negated or voice words in sound
+  prompts (words from the user's own description pass), sends it back with the problems at most twice, then stops.
