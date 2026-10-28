@@ -656,8 +656,9 @@ def film_make(pictures: list[Path] = typer.Argument(..., help="A folder of pictu
                                                                    "first of each."),
               takes: int = typer.Option(2, min=1, max=4, help="Clips made from each still; the film uses the first."),
               events: list[Path] = typer.Option(None, "--event", help="A picture of what happens (for example a "
-                                                                      "real blast over the sea): it goes to every "
-                                                                      "shot, never to the set. Repeat for more."),
+                                                                      "real blast over the sea): it goes to the "
+                                                                      "shots whose still names it, never to the set. "
+                                                                      "Repeat for more."),
               keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
     """References from your pictures and a shot plan from Claude (text only); then the look (a set picture and a
     character sheet), each shot's stills drawn from it and the takes of every still, joined into one silent MP4 from

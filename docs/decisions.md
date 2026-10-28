@@ -148,5 +148,7 @@
   picks.
 - The set pictures and sheets are FLUX outputs: they reach the image model as references only, resized and padded,
   never through face detection.
-- Pictures of the event (`--event`) go to every shot and never to the set; pictures of other people are not used.
+- Pictures of the event (`--event`) go only to the shots whose still request names them (with those numbered before
+  them, so the numbers hold), never to the set: the image model copies from every reference it gets. Pictures of
+  other people are not used.
 - One still takes at most 10 references, so a film checks that per still and allows up to 30 pictures in all.

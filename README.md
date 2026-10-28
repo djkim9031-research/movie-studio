@@ -198,7 +198,7 @@ projects/films/NAME/film.mp4 and review.html (every candidate and take; the ones
 Options: `--shots N` (3 to 6), `--seconds N` per shot (Wan 2.2 is trained on 5; longer shots are possible but may
 repeat motion), `--candidates N` (1 to 6: set pictures, sheets and stills per shot, default 3), `--takes N` (1 to 4
 clips per still, default 2), `--event PICTURE` (a picture of what happens, for example a real blast over the sea; it
-goes to every shot and never to the set; repeat for more), `--portrait`, `--keep-up`. A name is used once; pick a new
+goes only to the shots whose still names it, never to the set; repeat for more), `--portrait`, `--keep-up`. A name is used once; pick a new
 one for another film.
 
 The film is silent: Wan 2.2 makes no sound. The shot plan already holds a sound prompt per shot, and

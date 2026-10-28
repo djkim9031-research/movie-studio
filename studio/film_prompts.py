@@ -87,8 +87,9 @@ in the character sheet in image S, in the place shown in image P", with the numb
 moment changes: where the camera stands, the light, the event.
 - Ask to keep the person's exact face, identity, skin tone and hair, and repeat the clothes in the sheet's words.
 - Pictures of the event, when the shots have them, show what the event really looks like: take its look from them \
-(the shape and color of the flash, the cloud, the water) at the size and place the shot needs. The set picture never \
-shows the event.
+(the shape and color of the flash, the cloud, the water) at the size and place the shot needs. A shot gets an event \
+picture only when its still request names it by number (with the event pictures numbered before it), so name them \
+only in the shots that show the event. The set picture never shows the event.
 - Frame for the shot's moment: in a wide or over-the-shoulder shot the person is small, seen from behind or in \
 profile, looking at the event; in a reaction shot, a medium shot or medium close-up at three quarters, the face large \
 and unobstructed (a helmet gets a clear visor, all hair inside), the eyes on the event off-frame.

@@ -112,14 +112,24 @@ def test_the_lineage_runs_from_the_photos_through_the_look_to_the_takes(cfg, tmp
     assert [m["set"] for m in lineage["clips/shot1-1-1.mp4"]["models"]] == ["wan22-i2v", "wan22-lightx2v-1022"]
 
 
-def test_event_pictures_go_to_every_shot_and_never_to_the_set(cfg, tmp_path, renders):
-    blast = write(tmp_path / "blast.png", (1200, 800), exif=False)
-    claude = FakeClaude(plan(3))
-    make(cfg, tmp_path, claude, candidates=1, takes=1, events=[blast])
+def test_event_pictures_go_only_to_the_shots_that_name_them_and_never_to_the_set(cfg, tmp_path, renders):
+    trail = write(tmp_path / "trail.png", (1200, 800), exif=False)
+    blast = write(tmp_path / "blast.png", (1300, 800), exif=False)
+    told = plan(3)
+    told["shots"][0]["still_request"] = "Create a photograph of the person shown in images 1-2 ... a calm sky"
+    told["shots"][1]["still_request"] = "Create a photograph ... the meteor trail from image 5 high in the sky"
+    told["shots"][2]["still_request"] = "Create a photograph ... the blast from image 6 small on the horizon"
+    claude = FakeClaude(told)
+    make(cfg, tmp_path, claude, candidates=1, takes=1, events=[trail, blast])
     refs = {c[1]: c[3] for c in renders if c[0] == "still"}
-    assert refs["ride_set1"] == ["moon.png"] and "blast.png" not in refs["ride_sheet1"]
-    assert all(refs[f"ride_shot{n}-1"][-3:] == ["look/sheet1.png", "look/set1.png", "blast.png"] for n in (1, 2, 3))
-    assert 'image 5: a picture of the event, file name "blast"' in claude.calls[0][2]["messages"][0]["content"][0]["text"]
+    assert refs["ride_set1"] == ["moon.png"] and not {"trail.png", "blast.png"} & set(refs["ride_sheet1"])
+    assert refs["ride_shot1-1"][-2:] == ["look/sheet1.png", "look/set1.png"]
+    assert refs["ride_shot2-1"][-3:] == ["look/sheet1.png", "look/set1.png", "trail.png"]
+    # image 6 keeps its number, so image 5 comes along
+    assert refs["ride_shot3-1"][-4:] == ["look/sheet1.png", "look/set1.png", "trail.png", "blast.png"]
+    text = claude.calls[0][2]["messages"][0]["content"][0]["text"]
+    assert ('image 5: a picture of the event, file name "trail"; image 6: a picture of the event, file name "blast"'
+            in text)
 
 
 def test_a_film_needs_a_picture_of_the_place_before_any_gpu_work(cfg, tmp_path, renders):
