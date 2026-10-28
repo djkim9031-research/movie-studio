@@ -227,55 +227,116 @@ def test_make_refuses_a_film_name_that_exists(cfg, tmp_path, renders):
 class FakeWorker:
     models = ["prismaudio"]
 
-    def __init__(self, problems=()):
-        self.missing, self.calls = list(problems), []
+    def __init__(self, problems=(), speech=None):
+        self.missing, self.calls, self.heard = list(problems), [], []
+        self.speech_by = {name: list(values) for name, values in (speech or {}).items()}
 
     def problems(self, cfg):
         return self.missing
 
     def render(self, cfg, *, clip, prompt, seconds, seed, dest):
-        self.calls.append((clip, prompt, seconds, seed))
+        self.calls.append((clip.name, prompt, seconds, seed, dest.name))
         dest.write_bytes(b"wav")
         return SimpleNamespace(elapsed_s=3.0)
 
+    def speech(self, cfg, wav):
+        self.heard.append(wav.name)
+        queue = self.speech_by.get(wav.name)
+        return queue.pop(0) if queue else 0.0
 
-SHOT_MIX = {"lufs_made": -24.0, "gain_db": 8.0, "stereo": "narrowed", "width": 0.8, "correlation_before": -0.2,
-            "correlation_after": 0.1, "lufs": -16.1}
+
+BED = plan(3)["bible"]["bed"]
+SHOT_MIX = {"lufs_made": -24.0, "gain_db": 4.0, "stereo": "kept", "width": 1.0, "correlation_before": 0.3,
+            "correlation_after": 0.3}
 
 
-def test_add_sound_makes_each_track_with_handles_then_mixes_them(cfg, tmp_path, renders, monkeypatch):
-    make(cfg, tmp_path, FakeClaude(plan(3)))
-    padded, mixed, said = [], [], []
+@pytest.fixture
+def sound_steps(monkeypatch):
+    seen = {"padded": [], "pictures": [], "joined": [], "mixed": [], "files": []}
 
-    def padded_clip(cfg, clip, out, *, seconds, fps):
-        padded.append((clip.name, seconds, fps))
+    def padded_clip(cfg, clip, out, *, seconds, fps, handle):
+        seen["padded"].append((clip.name, seconds, fps, handle))
         out.write_bytes(b"padded")
         return out
 
-    def with_sound(cfg, silent, tracks, out, *, seconds):
-        mixed.append((silent.name, [t.name for t in tracks], out.name, seconds))
-        out.write_bytes(b"film with sound")
-        return {"lufs": -16.0, "true_peak": -1.8, "gain_db": 0.4, "shots": [SHOT_MIX] * 3}
+    def still_clip(cfg, picture, out, *, seconds, fps):
+        seen["pictures"].append((picture.name, seconds))
+        out.write_bytes(b"still")
+        return out
 
-    monkeypatch.setattr("studio.film.assemble.padded_clip", padded_clip)
-    monkeypatch.setattr("studio.film.assemble.with_sound", with_sound)
-    worker = FakeWorker()
+    def join_bed(cfg, segments, out):
+        seen["joined"].append([s.name for s in segments])
+        out.write_bytes(b"bed")
+        return out
+
+    def bed_from_file(cfg, source, out, *, seconds):
+        seen["files"].append((source.name, seconds))
+        out.write_bytes(b"bed")
+        return out
+
+    def with_layers(cfg, film_mp4, bed, foley, out, *, shots, seconds):
+        seen["mixed"].append((film_mp4.name, bed.name, {n: t.name for n, t in foley.items()}, out.name, shots, seconds))
+        out.write_bytes(b"film with sound")
+        return {"lufs": -16.0, "true_peak": -1.8, "gain_db": 0.4, "bed": dict(SHOT_MIX),
+                "shots": [{"foley": n in foley, "lufs": -16.5, **(SHOT_MIX if n in foley else {})}
+                          for n in range(1, shots + 1)]}
+
+    for name, fake in (("padded_clip", padded_clip), ("still_clip", still_clip), ("join_bed", join_bed),
+                       ("bed_from_file", bed_from_file), ("with_layers", with_layers)):
+        monkeypatch.setattr(f"studio.film.assemble.{name}", fake)
+    return seen
+
+
+def test_add_sound_lays_one_bed_and_makes_foley_only_for_shots_with_their_own_sound(cfg, tmp_path, renders,
+                                                                                    sound_steps):
+    told = plan(3)
+    told["shots"][0]["foley"] = False
+    make(cfg, tmp_path, FakeClaude(told), candidates=1, takes=1)
+    worker, said = FakeWorker(), []
     data = film.add_sound(cfg, name="ride", worker=worker, echo=said.append, seed=40)
-    # The worker hears each shot from its padded clip, 0.5 s longer at both ends: 5 s shots become 6 s tracks.
-    assert padded == [(f"shot{n}-1-1.mp4", 5, 16) for n in (1, 2, 3)]
-    assert not any(c.exists() for c, *_ in worker.calls)  # the padded clips are temporary
-    assert [(c.name, p, s, seed) for c, p, s, seed in worker.calls] == \
-        [(f"shot{n}-1-1.mp4", plan(3)["shots"][n - 1]["sound_prompt"], 6, 40 + n) for n in (1, 2, 3)]
-    assert mixed == [("film.mp4", ["shot1.wav", "shot2.wav", "shot3.wav"], "film-sound.mp4", 5)]
-    assert data["sound"]["film"] == "film-sound.mp4" and data["sound"]["true_peak"] == -1.8
-    assert data["sound"]["shots"][0]["stereo"] == "narrowed" and data["shots"][0]["sound"] == "sound/shot1.wav"
-    track = json.loads(provenance.sidecar(cfg.projects_dir / "films" / "ride" / "sound" / "shot1.wav").read_text())
-    assert [m["set"] for m in track["models"]] == ["prismaudio"] and \
-        track["inputs"][0]["path"].endswith("shot1-1-1.mp4")
-    assert track["params"]["handle_s"] == 0.5 and track["params"]["seconds"] == 5
+    # 15 s of film: two 10 s bed segments crossfaded, made from the first shot's view
+    assert sound_steps["pictures"] == [("view-gate1.png", 10)]
+    assert [c for c in worker.calls if c[4].startswith("bed")] == [("bed.mp4", BED, 10, 140, "bed1.wav"),
+                                                                    ("bed.mp4", BED, 10, 141, "bed2.wav")]
+    assert sound_steps["joined"] == [["bed1.wav", "bed2.wav"]]
+    # Foley only for shots 2 and 3, from clips held 1.5 s at both ends: 8 s windows for 5 s shots
+    assert sound_steps["padded"] == [(f"shot{n}-1-1.mp4", 5, 16, 1.5) for n in (2, 3)]
+    assert [c for c in worker.calls if c[4].startswith("shot")] == \
+        [(f"shot{n}-1-1.mp4", told["shots"][n - 1]["sound_prompt"], 8, 40 + n, f"shot{n}.wav") for n in (2, 3)]
+    assert worker.heard == ["bed1.wav", "bed2.wav", "shot2.wav", "shot3.wav"]  # every generated track is checked
+    assert sound_steps["mixed"] == [("film.mp4", "bed.wav", {2: "shot2.wav", 3: "shot3.wav"}, "film-sound.mp4", 3, 5)]
+    assert data["sound"]["film"] == "film-sound.mp4" and data["sound"]["bed_prompt"] == BED
+    assert data["shots"][0]["sound"] is None and data["shots"][1]["sound"] == "sound/shot2.wav"
+    track = json.loads(provenance.sidecar(cfg.projects_dir / "films" / "ride" / "sound" / "shot2.wav").read_text())
+    assert [m["set"] for m in track["models"]] == ["prismaudio"] and track["inputs"][0]["path"].endswith("shot2-1-1.mp4")
+    assert track["params"]["handle_s"] == 1.5 and track["params"]["seconds"] == 5
     assert "film-sound.mp4" in (cfg.projects_dir / "films" / "ride" / "review.html").read_text()
-    assert any("shot 3: -16.1 LUFS in the film" in line and "stereo narrowed" in line for line in said)
+    assert any(line.startswith("bed   2 segments") for line in said)
     assert any("film -16.0 LUFS, true peak -1.8 dBTP" in line for line in said)
+
+
+def test_a_track_that_sounds_like_speech_is_made_again_then_dropped(cfg, tmp_path, renders, sound_steps):
+    make(cfg, tmp_path, FakeClaude(plan(3)), candidates=1, takes=1)
+    worker, said = FakeWorker(speech={"bed2.wav": [0.5, 0.0], "shot2.wav": [0.5, 0.0], "shot3.wav": [0.6, 0.4]}), []
+    data = film.add_sound(cfg, name="ride", worker=worker, echo=said.append, seed=40)
+    seeds = [(c[4], c[3]) for c in worker.calls]
+    assert seeds == [("bed1.wav", 140), ("bed2.wav", 141), ("bed2.wav", 1141), ("shot1.wav", 41),
+                     ("shot2.wav", 42), ("shot2.wav", 1042), ("shot3.wav", 43), ("shot3.wav", 1043)]
+    assert sound_steps["mixed"][0][2] == {1: "shot1.wav", 2: "shot2.wav"}
+    shot2, shot3 = data["shots"][1], data["shots"][2]
+    assert (shot2["sound"], shot2["sound_seed"], shot2["speech"]) == ("sound/shot2.wav", 1042, 0.0)
+    assert shot3["sound"] is None and shot3["speech"] == 0.4 and shot3["dropped"] == "speech"
+    assert any("shot 3: speech-like twice (0.40 of the track); dropped, the bed carries the shot" in l for l in said)
+
+
+def test_a_recording_can_be_the_bed(cfg, tmp_path, renders, sound_steps):
+    make(cfg, tmp_path, FakeClaude(plan(3)), candidates=1, takes=1)
+    recording = tmp_path / "harbor.m4a"
+    recording.write_bytes(b"m4a")
+    worker = FakeWorker()
+    data = film.add_sound(cfg, name="ride", worker=worker, echo=print, seed=40, bed_file=recording)
+    assert sound_steps["files"] == [("harbor.m4a", 15)] and not sound_steps["pictures"]
+    assert not [c for c in worker.calls if c[4].startswith("bed")] and data["sound"]["bed_file"] == str(recording)
 
 
 def test_add_sound_refuses_when_the_worker_is_not_ready(cfg, tmp_path, renders):

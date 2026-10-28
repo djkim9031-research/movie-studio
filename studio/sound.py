@@ -13,6 +13,8 @@ from studio.config import Config
 from studio.fs import write_private
 
 RUNNER = Path(__file__).resolve().parent.parent / "workers" / "prismaudio" / "run.py"
+SPEECH = RUNNER.with_name("speech.py")
+SITE = Path(".venv") / "lib" / "python3.11" / "site-packages"
 ERROR = "prismaudio: error: "  # the runner's own error line
 SETS = ["prismaudio", "videoprism-lvt", "t5gemma"]
 # Paths under models/audio.
@@ -41,6 +43,10 @@ class PrismAudio:
     def python(self, cfg: Config) -> Path:
         return self.home(cfg) / ".venv" / "bin" / "python"
 
+    def detector(self, cfg: Config) -> Path:
+        """Silero VAD in the worker environment: it hears speech-like sound in a generated track."""
+        return self.home(cfg) / SITE / "silero_vad"
+
     @staticmethod
     def audio_root(cfg: Config) -> Path:
         return cfg.data_root / "models" / "audio"
@@ -58,6 +64,8 @@ class PrismAudio:
             found.append(f"no VideoPrism text tokenizer at {self.audio_root(cfg) / TOKENIZER}")
         if not self.python(cfg).exists() or not (self.home(cfg) / "src" / "predict.py").is_file():
             found.append(f"no worker environment in {self.home(cfg)}; see the README, Sound")
+        elif not self.detector(cfg).is_dir():
+            found.append(f"no speech detector in {self.home(cfg)}; rerun workers/prismaudio/setup.sh")
         return found
 
     def render(self, cfg: Config, *, clip: Path, prompt: str, seconds: int, seed: int, dest: Path) -> Track:
@@ -70,12 +78,9 @@ class PrismAudio:
                            "videoprism": str(root / "videoprism" / "flax_lvt_large_f8r288_repeated.npz"),
                            "videoprism_tokenizer": str(root / TOKENIZER),
                            "t5gemma": str(root / T5GEMMA)}}
-        # A clean environment: no tokens, no network fetches, and JAX takes GPU memory only as it needs it.
-        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(Path.home()), "HF_HUB_OFFLINE": "1",
-               "TRANSFORMERS_OFFLINE": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false", "TF_CPP_MIN_LOG_LEVEL": "2"}
         started = time.monotonic()
         result = subprocess.run([str(self.python(cfg)), "-I", str(RUNNER)], input=json.dumps(job),
-                                capture_output=True, text=True, timeout=3600, env=env, cwd=self.home(cfg))
+                                capture_output=True, text=True, timeout=3600, env=_env(), cwd=self.home(cfg))
         if result.returncode != 0:
             log = dest.with_suffix(".log")
             write_private(log, result.stderr)
@@ -88,3 +93,18 @@ class PrismAudio:
             raise SoundError(f"PrismAudio wrote no track for {clip.name}")
         reply = json.loads(result.stdout.strip().splitlines()[-1])
         return Track(path=dest, elapsed_s=time.monotonic() - started, peak_gib=reply.get("peak_gib"))
+
+    def speech(self, cfg: Config, wav: Path) -> float:
+        """The share of `wav` that Silero VAD hears as speech, 0 to 1. On CPU, a second or two."""
+        result = subprocess.run([str(self.python(cfg)), "-I", str(SPEECH)], input=json.dumps({"wav": str(wav)}),
+                                capture_output=True, text=True, timeout=600, env=_env(), cwd=self.home(cfg))
+        if result.returncode != 0:
+            lines = result.stderr.strip().splitlines()
+            raise SoundError(f"the speech check failed on {wav.name}: {lines[-1] if lines else 'no message'}")
+        return float(json.loads(result.stdout.strip().splitlines()[-1])["speech"])
+
+
+def _env() -> dict:
+    """A clean environment: no tokens, no network fetches, and JAX takes GPU memory only as it needs it."""
+    return {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(Path.home()), "HF_HUB_OFFLINE": "1",
+            "TRANSFORMERS_OFFLINE": "1", "XLA_PYTHON_CLIENT_PREALLOCATE": "false", "TF_CPP_MIN_LOG_LEVEL": "2"}

@@ -156,16 +156,18 @@ your photos + pictures of the place + a prompt (+ pictures of the event)
   |
   1. references (CPU)    as for a scene: up to 6 face crops of the person, other pictures whole
   |
-  2. shot plan (Claude)  your words -> a title, a set request, a character sheet request and 3-6 shots, each with
-  |                      a still request, a motion prompt and a sound prompt; Claude gets text only, and a plan
-  |                      that breaks a checked rule goes back to it, at most twice
-  3. look (FLUX 3        3 set pictures (the place, no people) and 3 character sheets (you in the film's clothes:
-  |   Image Klein)       front, three quarters, back), 1920x1088
-  4. stills (FLUX 3      3 stills per shot, drawn from your photos, the first sheet, the first set picture and the
-  |   Image Klein)       event pictures
-  5. takes (Wan 2.2)     2 clips of 5 s per still at 1280x704, 16 fps (4-step lightx2v LoRAs); every still is drawn
-  |                      before the first clip, so the GPU swaps models once
-  6. film (FFmpeg)       each shot's first still's first take, cut to whole seconds, joined with hard cuts, H.264
+  2. shot plan (Claude)  your words -> a title, a bible (your clothes, the place and the light as fixed phrases, the
+  |                      ambience, 1-4 views of the place), a set request, a sheet request and 3-6 shots, each
+  |                      with its view, a still request, a motion prompt, a sound prompt and any event with its
+  |                      box; Claude gets text only, and a plan that breaks a checked rule goes back to it, twice
+  3. look (FLUX 3        3 set pictures (the place, no people), 3 character sheets (you in the film's clothes:
+  |   Image Klein)       front, three quarters, back) and 3 pictures of each view, drawn from the first set picture
+  4. stills (FLUX 3      3 stills per shot, drawn from your photos, the first sheet and the shot's view; each caption
+  |   Image Klein)       is checked for the fixed phrases before drawing; an event is painted into its box after
+  5. takes (Wan 2.2)     4 clips of 5 s of each shot's picked still (the first until you pick), 1280x704, 16 fps
+  |                      (4-step lightx2v LoRAs), each scored for motion, still ends and color drift; every still
+  |                      is drawn before the first clip, so the GPU swaps models once
+  6. film (FFmpeg)       each shot's picked take, cut to whole seconds, joined with hard cuts, H.264
   v
 projects/films/NAME/film.mp4 and review.html (every candidate and take; the ones in the film marked)
 ```
@@ -186,20 +188,24 @@ projects/films/NAME/film.mp4 and review.html (every candidate and take; the ones
    ```
 
    The folder needs at least one picture of the place without people: the set picture is drawn from it. Pictures of
-   other people are not used. Four shots take about 2 hours with the defaults: 18 stills at two and a half minutes,
-   24 clips at three, and the model loads; `--candidates 1 --takes 1` takes about half an hour. Claude's shot plan
+   other people are not used. Four shots with two views take about 2 hours with the defaults: 24 stills at about two
+   and a half minutes, 16 clips at three, and the model loads; `--candidates 1 --takes 1` takes about half an hour. Claude's shot plan
    costs about $0.08, up to three times that when it is sent back. Claude stages the shots from your words: the
    person looks at what happens (wide shots from behind, reaction shots at three quarters), not into the lens unless
    you ask.
 
-3. Open `~/studio-data/projects/films/ride/review.html`: the film at the top (with sound, once added), then each
-   shot's still, clip and prompts.
+3. Open `~/studio-data/projects/films/ride/review.html`: the film at the top (with sound, once added), the look,
+   then each shot's stills and takes with their numbers and prompts.
+
+4. Change the cut: `uv run studio film pick --name ride 2=3 4=1.2` gives shot 2 its still 3 (with that still's first
+   take) and shot 4 take 2 of its still 1, and joins the film again. A still without takes gets them with
+   `uv run studio film takes --name ride` (4 per still by default). After a new cut, run `film sound` again.
 
 Options: `--shots N` (3 to 6), `--seconds N` per shot (Wan 2.2 is trained on 5; longer shots are possible but may
-repeat motion), `--candidates N` (1 to 6: set pictures, sheets and stills per shot, default 3), `--takes N` (1 to 4
-clips per still, default 2), `--event PICTURE` (a picture of what happens, for example a real blast over the sea; it
-goes only to the shots whose still names it, never to the set; repeat for more), `--portrait`, `--keep-up`. A name is used once; pick a new
-one for another film.
+repeat motion), `--candidates N` (1 to 6: set pictures, sheets, view pictures and stills per shot, default 3), `--takes N` (1 to 8
+clips of each shot's picked still, default 4), `--event PICTURE` (a picture of what happens, for example a real blast
+over the sea; a shot's event is painted from it into the event's box, never drawn into the set; repeat for more),
+`--portrait`, `--keep-up`. A name is used once; pick a new one for another film.
 
 The film is silent: Wan 2.2 makes no sound. The shot plan already holds a sound prompt per shot, and
 `uv run studio film sound --name ride` turns it into film-sound.mp4 once the sound worker is set up (see Sound).
@@ -209,12 +215,13 @@ The film is silent: Wan 2.2 makes no sound. The shot plan already holds a sound 
 `~/studio-data/projects/films/NAME/`:
 
 - `refs/`: the references as used
-- `look/setN.png` and `look/sheetN.png`: the set picture and character sheet candidates; the stills are drawn from
-  the first of each
+- `look/setN.png`, `look/sheetN.png` and `look/view-ID-N.png`: the set picture, character sheet and view picture
+  candidates; the stills are drawn from the first of each
 - `stills/shotN-C.png` and `stills/shotN-C.graph.json`: candidate C of shot N's still and the ComfyUI graph that
-  drew it
-- `clips/shotN-C-T.mp4`: take T of still C, silent; the film uses each shot's `shotN-1-1.mp4`
-- `sound/shotN.wav`: each shot's sound track, once sound is added; 0.5 s longer at both ends for the crossfades
+  drew it; for a shot with an event, `stills/shotN-C-base.png` is the still before the event was painted in
+- `clips/shotN-C-T.mp4`: take T of still C, silent; the film uses the picks in `film.json`
+- `sound/bed.wav` (from `sound/bedN.wav` segments) and `sound/shotN.wav`: the ambience under the whole film and each
+  Foley shot's track, 1.5 s longer at both ends, once sound is added
 - `film.mp4`: the shots joined; `film-sound.mp4` once sound is added
 - `film.json`: the prompt, the title, every prompt Claude wrote, seeds, timings and model versions
 - `review.html`: the page to watch it all; it shows real people, so keep it to yourself
@@ -223,18 +230,22 @@ Every still, clip and film has a `.prov.json` record beside it: its sha256, the 
 
 ### Sound
 
-Wan makes no sound, so a film gets its sound in a second step: PrismAudio watches each finished clip and makes a
-44.1 kHz stereo track from the shot's sound prompt (hooves, wind, cloth, the ambience of the place; no music or
-voices). Each track is made 0.5 s longer at both ends (from the shot's first and last frames held), so the mix can
-crossfade without moving any sound:
+Wan makes no sound, so a film gets its sound in a second step, in layers:
 
-- every shot is brought to one level;
-- a track whose left and right would cancel in mono has its stereo narrowed, or its right channel inverted when it
-  is mostly out of phase;
-- neighbouring shots crossfade over 0.5 s centred on each cut;
-- the film is brought to -16 LUFS with its true peak under -1.5 dBTP after AAC, and written as `film-sound.mp4`.
+- the bed: one ambience track under the whole film, so nothing changes at the cuts. PrismAudio makes it in 10 s
+  segments from a still picture of the place and the bible's ambience prompt, joined by crossfades; or give your own
+  recording of a similar place with `--bed FILE`;
+- Foley: for each shot whose plan says it has its own sound, PrismAudio watches the clip and makes that sound from
+  the shot's sound prompt, 1.5 s longer at both ends so it hears 8 s, then it is placed on the shot with short fades;
+- a speech check: generated sound can come out as speech-like babble, so every generated track goes through a voice
+  detector (Silero VAD); a track that sounds like speech is made again with another seed, and a Foley track that
+  still does is dropped, leaving the bed;
+- the mix: tracks that would cancel in mono have their stereo narrowed (or the right channel inverted), the bed sits
+  six LU under the Foley, and one gain brings the whole film to -16 LUFS with its true peak under -1.5 dBTP after
+  AAC, written as `film-sound.mp4`. Quiet shots stay quieter than shots with their own sound.
 
-`film sound` prints each shot's level and stereo fix and the film's loudness and true peak; `film.json` keeps them.
+`film sound` prints the bed, each Foley track's speech check and level, and the film's loudness and true peak;
+`film.json` keeps them.
 
 PrismAudio runs in its own Python environment (Python 3.11 with PyTorch and JAX for this GPU), from a pinned source
 commit, with downloads turned off. Set it up once:
@@ -280,9 +291,11 @@ missing, it says which.
   US$5M revenue). It forbids biometric processing of the model and its outputs, so face recognition runs only on
   your input photos, never on generated images, and likeness is judged by eye.
 - Wan 2.2 and the lightx2v LoRAs: Apache-2.0.
-- Film sound: PrismAudio (MIT) with VideoPrism (Apache-2.0), Synchformer (MIT), T5Gemma (Gemma Terms of Use) and
-  the Stable Audio Open VAE (Stability AI Community License: non-commercial use free; commercial use needs
-  Stability AI's terms). Why not MMAudio or HunyuanVideo-Foley: [docs/decisions.md](docs/decisions.md).
+- Film sound: PrismAudio (MIT license, but its model card limits the code, weights and data to research and
+  educational use and needs the authors' permission for commercial use) with VideoPrism (Apache-2.0), Synchformer
+  (MIT), T5Gemma (Gemma Terms of Use) and the Stable Audio Open VAE (Stability AI Community License: non-commercial
+  use free; commercial use needs Stability AI's terms); the speech check is Silero VAD (MIT). Why not MMAudio or
+  HunyuanVideo-Foley: [docs/decisions.md](docs/decisions.md).
 - LTX-2.5: LTX-2.x Community License. YuNet (MIT) and SFace (Apache-2.0) come from the OpenCV model zoo. BFL's
   upsampler instructions in `config/prompts/` are MIT; see `config/prompts/LICENSE.flux3-workflows`.
 - Use photos only of people who agree to it.

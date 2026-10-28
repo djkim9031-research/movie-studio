@@ -726,9 +726,12 @@ def film_takes(name: str = typer.Option(..., help="Film name."),
 
 @film_app.command("sound")
 def film_sound(name: str = typer.Option(..., help="Film name."),
-               seed: int = typer.Option(None, help="Seed of shot 1's track; shot N uses seed + N - 1. Random when "
-                                                   "omitted.")):
-    """A PrismAudio track per shot from its clip and sound prompt, mixed to -16 LUFS into film-sound.mp4."""
+               seed: int = typer.Option(None, help="Seed of shot 1's Foley track; shot N uses seed + N - 1. Random "
+                                                   "when omitted."),
+               bed: Path = typer.Option(None, help="A recording of the place's ambience to lay under the whole film "
+                                                   "instead of a generated bed; it is looped to the film's length.")):
+    """The film's sound in layers: one ambience bed under every cut, PrismAudio Foley for the shots with their own
+    sound, every generated track checked for speech, and the film mixed to -16 LUFS into film-sound.mp4."""
     cfg = _state["cfg"]
     worker = sound.PrismAudio()
     try:
@@ -745,8 +748,11 @@ def film_sound(name: str = typer.Option(..., help="Film name."),
         if not verdict.ok:
             typer.echo("FAIL  " + "; ".join(verdict.problems))
             raise typer.Exit(1)
+        if bed is not None and not bed.is_file():
+            typer.echo(f"FAIL  no recording at {bed}")
+            raise typer.Exit(1)
         made = film.add_sound(cfg, name=name, worker=worker, echo=typer.echo,
-                              seed=None if seed is None else seed - 1)
+                              seed=None if seed is None else seed - 1, bed_file=bed)
     except FILM_ERRORS as error:
         typer.echo(f"FAIL  {error}")
         raise typer.Exit(1)

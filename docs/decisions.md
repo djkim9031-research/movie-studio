@@ -152,3 +152,27 @@
   them, so the numbers hold), never to the set: the image model copies from every reference it gets. Pictures of
   other people are not used.
 - One still takes at most 10 references, so a film checks that per still and allows up to 30 pictures in all.
+
+## 2026-10-28: the harness after the research
+
+The research (`~/studio-data/docs/research/reports/Realistic AI video pipelines 2026.md`) found the gap to praised AI
+films mostly between shots and after generation: professionals keep 2-5% of what they generate, automated pipelines
+gain most from explicit continuity state and little from critic loops, and the craft stages (selection, edit, sound)
+carry the rest. The user approved its first five requirements.
+
+- Continuity as data: the plan holds a bible (the wardrobe, the place and the light as locked phrases, an ambience
+  prompt, one to four views). The code checks that each locked phrase is copied where the rules say, and checks every
+  upsampler caption before drawing: a dropped phrase goes back in as a short sentence (`caption_fixed` in film.json).
+  To check the caption, the upsampler now runs on its own before the image is drawn from the caption.
+- Views: each view gets its own pictures, drawn from the first set picture alone, and every shot references its
+  view. Re-framing with Qwen-Image-Edit-2511 and a multi-angle LoRA, the community default, is a later bench entry.
+- Events: a shot's still is drawn without its event; the event is painted into its box from the event pictures, the
+  rest of the still kept pixel for pixel. Events are capped at 30% of the frame width; bigger spectacle is implied.
+- Takes: four takes of each shot's picked still instead of two takes of every still; `film pick` and `film takes`
+  change the cut. Each take gets numbers that sort without faces (motion, still ends, color drift); the user picks.
+- Sound in layers: one bed under the whole film, Foley only for shots with their own sound (8 s windows), a speech
+  check on every generated track (made again once, then dropped), and one loudness for the whole film instead of
+  one per shot, which had pushed quiet shots into the limiter (1.4 to 3.2 LU low).
+- PrismAudio's model card, unchanged since 2026-05-31, says MIT but limits the code, weights and data to research and
+  educational use; commercial use needs the authors' permission. Our earlier notes said only MIT. A personal film
+  fits; anything shared further needs another sound model or the authors' word.

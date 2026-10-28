@@ -150,8 +150,9 @@ models:
   # Sound for films (2026-10-27): PrismAudio, its video encoder and its text encoder. Audio only, so no faces in
   # their outputs.
   prismaudio:
-    # PrismAudio (MIT): the video-to-audio model, the Stable Audio Open VAE it decodes with (Stability AI Community
-    # License, non-commercial use free) and Synchformer (MIT).
+    # PrismAudio (MIT license; its card limits code, weights and data to research and educational use, commercial use
+    # only with the authors' permission): the video-to-audio model, the Stable Audio Open VAE it decodes with
+    # (Stability AI Community License, non-commercial use free) and Synchformer (MIT).
     repo: FunAudioLLM/PrismAudio
     revision: d1a33add3f936ba35bf1bd6a86d34ef991ba604f
     root: audio

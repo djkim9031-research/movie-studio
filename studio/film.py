@@ -6,6 +6,7 @@ finished film by a second step. Pictures and frames stay on this machine."""
 import contextlib
 import html
 import json
+import math
 import re
 import secrets
 import tempfile
@@ -28,6 +29,7 @@ FPS = 16  # Wan 2.2's frame rate
 MODEL_SETS = ["face-detect", "face-id", "flux3-klein", *bench.VARIANTS[VIDEO]["models"]]
 ALL_REFERENCES = 30  # pictures a film may use in all; each still takes at most MAX_REFERENCES of them
 LOCKED = {"wardrobe": "Clothes", "place": "Place", "light": "Light"}
+SPEECH_MAX = 0.1  # share of a generated track heard as speech above which it is made again, then dropped
 COMMON = {"with", "from", "that", "this", "under", "over", "into", "onto", "their", "there", "each", "very", "some",
           "while", "near", "about"}
 
@@ -279,41 +281,102 @@ def takes(cfg: Config, *, name: str, count: int, echo, gpu=contextlib.nullcontex
     return data
 
 
-def add_sound(cfg: Config, *, name: str, worker, echo, seed: int | None = None) -> dict:
-    """One track per shot from its clip and sound prompt, made assemble.HANDLE seconds longer at both ends so the
-    mix can crossfade at the cuts, then the film again with the tracks mixed in."""
+def _gated(cfg: Config, worker, *, clip: Path, prompt: str, seconds: int, seed: int, dest: Path):
+    """A track made and checked for speech, made once more with another seed when it sounds like speech. Returns the
+    speech share, the seed used, the time taken and whether the track is clean."""
+    for attempt in (0, 1):
+        made = worker.render(cfg, clip=clip, prompt=prompt, seconds=seconds, seed=seed + 1000 * attempt, dest=dest)
+        heard = worker.speech(cfg, dest)
+        if heard < SPEECH_MAX:
+            break
+    return heard, seed + 1000 * attempt, made.elapsed_s, heard < SPEECH_MAX
+
+
+def _bed_picture(data: dict) -> str:
+    """The picture the bed is made from: the first shot's view, else the set picture, else its still."""
+    look, first = data.get("look", {}), data["shots"][0]
+    views = look.get("views", {})
+    if views.get(first.get("view")):
+        return views[first["view"]][0]["file"]
+    return look["set"][0]["file"] if look.get("set") else first["still"]
+
+
+def _bed(cfg: Config, folder: Path, data: dict, worker, base: int, sound_dir: Path, echo) -> tuple[Path, dict]:
+    """The ambience under the whole film: BED_SEGMENT-second tracks made from a still picture of the place with the
+    bible's bed prompt, each checked for speech, joined by crossfades."""
+    length = len(data["shots"]) * data["seconds"]
+    count = max(1, math.ceil((length - assemble.BED_CROSSFADE) / (assemble.BED_SEGMENT - assemble.BED_CROSSFADE)))
+    prompt = (data.get("bible") or {}).get("bed") or data["shots"][0]["sound_prompt"]
+    picture = folder / _bed_picture(data)
+    segments = []
+    with tempfile.TemporaryDirectory() as tmp:
+        still = assemble.still_clip(cfg, picture, Path(tmp) / "bed.mp4", seconds=assemble.BED_SEGMENT, fps=data["fps"])
+        for i in range(count):
+            dest = sound_dir / f"bed{i + 1}.wav"
+            heard, used, _, clean = _gated(cfg, worker, clip=still, prompt=prompt, seconds=assemble.BED_SEGMENT,
+                                           seed=base + 100 + i, dest=dest)
+            provenance.write(cfg, dest, kind="sound", models=worker.models, inputs=[picture],
+                             params={"seed": used, "seconds": assemble.BED_SEGMENT})
+            segments.append({"file": f"sound/{dest.name}", "seed": used, "speech": heard})
+            if not clean:
+                echo(f"bed   segment {i + 1}: speech-like twice ({heard:.2f} of the track); kept, the film needs a bed")
+    bed = assemble.join_bed(cfg, [folder / seg["file"] for seg in segments], sound_dir / "bed.wav")
+    echo(f"bed   {count} segments of {assemble.BED_SEGMENT} s from {picture.name}, speech "
+         + ", ".join(f"{seg['speech']:.2f}" for seg in segments))
+    return bed, {"bed_prompt": prompt, "bed_segments": segments}
+
+
+def add_sound(cfg: Config, *, name: str, worker, echo, seed: int | None = None, bed_file: Path | None = None) -> dict:
+    """The film's sound in layers: one ambience bed under every cut (from `bed_file`, a recording, or made from a
+    still picture of the place), Foley for each shot that has its own sound (made FOLEY_HANDLE seconds longer at both
+    ends), every generated track checked for speech, and the film mixed as one programme."""
     folder, data = load(cfg, name)
     if not data.get("film"):
         raise FilmError(f"film {data['name']} has no finished picture yet")
     problems = worker.problems(cfg)
     if problems:
         raise FilmError(f"the sound worker is not ready: {'; '.join(problems)}")
-    base = seed if seed is not None else secrets.randbelow(2**31 - 100)
+    base = seed if seed is not None else secrets.randbelow(2**31 - 2000)
     sound_dir = private_dir(folder / "sound")
-    seconds = data["seconds"]
+    seconds, shots = data["seconds"], data["shots"]
+    if bed_file:
+        bed = assemble.bed_from_file(cfg, bed_file, sound_dir / "bed.wav", seconds=len(shots) * seconds)
+        about = {"bed_file": str(bed_file)}
+        echo(f"bed   from {bed_file}")
+    else:
+        bed, about = _bed(cfg, folder, data, worker, base, sound_dir, echo)
+    tracks = {}
     with tempfile.TemporaryDirectory() as tmp:
-        for shot in data["shots"]:
+        for shot in shots:
             n = shot["n"]
-            dest = sound_dir / f"shot{n}.wav"
-            clip = folder / shot["clip"]
-            padded = assemble.padded_clip(cfg, clip, Path(tmp) / clip.name, seconds=seconds, fps=data["fps"])
-            made = worker.render(cfg, clip=padded, prompt=shot["sound_prompt"],
-                                 seconds=seconds + int(2 * assemble.HANDLE), seed=base + n, dest=dest)
+            shot.update(sound=None, speech=None, dropped=None)
+            if not shot.get("foley", True):
+                continue
+            dest, clip = sound_dir / f"shot{n}.wav", folder / shot["clip"]
+            padded = assemble.padded_clip(cfg, clip, Path(tmp) / clip.name, seconds=seconds, fps=data["fps"],
+                                          handle=assemble.FOLEY_HANDLE)
+            heard, used, took, clean = _gated(cfg, worker, clip=padded, prompt=shot["sound_prompt"],
+                                              seconds=seconds + int(2 * assemble.FOLEY_HANDLE), seed=base + n,
+                                              dest=dest)
             padded.unlink()
-            provenance.write(cfg, dest, kind="sound", models=worker.models, inputs=[clip],
-                             params={"seed": base + n, "seconds": seconds, "handle_s": assemble.HANDLE})
-            shot.update(sound=f"sound/{dest.name}", sound_seed=base + n, sound_s=round(made.elapsed_s, 1))
+            shot.update(sound_seed=used, sound_s=round(took, 1), speech=heard)
+            if clean:
+                provenance.write(cfg, dest, kind="sound", models=worker.models, inputs=[clip],
+                                 params={"seed": used, "seconds": seconds, "handle_s": assemble.FOLEY_HANDLE})
+                shot["sound"], tracks[n] = f"sound/{dest.name}", dest
+                echo(f"foley shot {n}: seed {used}, speech {heard:.2f}, {took:.1f} s -> {dest}")
+            else:
+                shot["dropped"] = "speech"
+                echo(f"foley shot {n}: speech-like twice ({heard:.2f} of the track); dropped, the bed carries the "
+                     "shot")
             _save(folder, data)
-            echo(f"sound {n}/{len(data['shots'])}  seed {base + n}, {made.elapsed_s:.1f} s -> {dest}")
     out = folder / "film-sound.mp4"
-    mix = assemble.with_sound(cfg, folder / data["film"], [folder / s["sound"] for s in data["shots"]], out,
-                              seconds=seconds)
-    data["sound"] = {"film": out.name, **mix}
+    mix = assemble.with_layers(cfg, folder / data["film"], bed, tracks, out, shots=len(shots), seconds=seconds)
+    data["sound"] = {"film": out.name, **about, **mix}
     _save(folder, data)
     for n, s in enumerate(mix["shots"], start=1):
-        echo(f"mix   shot {n}: {s['lufs']:.1f} LUFS in the film (made at {s['lufs_made']:.1f}, gain "
-             f"{s['gain_db']:+.1f} dB), stereo {s['stereo']}, correlation {s['correlation_before']:+.2f} -> "
-             f"{s['correlation_after']:+.2f}")
+        echo(f"mix   shot {n}: {s['lufs']:.1f} LUFS in the film, "
+             + (f"Foley gain {s['gain_db']:+.1f} dB, stereo {s['stereo']}" if s["foley"] else "bed only"))
     echo(f"mix   film {mix['lufs']:.1f} LUFS, true peak {mix['true_peak']:.1f} dBTP after AAC")
     return data
 

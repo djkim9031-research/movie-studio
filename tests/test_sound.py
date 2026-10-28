@@ -20,7 +20,7 @@ def ready(cfg, monkeypatch):
     monkeypatch.setattr("studio.sound.models.present", lambda cfg, name: [])
     worker = sound.PrismAudio()
     for path in (worker.python(cfg), worker.home(cfg) / "src" / "predict.py",
-                 cfg.data_root / "models" / "audio" / sound.TOKENIZER):
+                 cfg.data_root / "models" / "audio" / sound.TOKENIZER, worker.detector(cfg) / "__init__.py"):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("")
     return worker
@@ -89,3 +89,34 @@ def test_render_reports_the_runner_error_line_and_keeps_the_log(cfg, tmp_path, m
     assert str(failed.value) == f"PrismAudio failed on shot1.mp4: RuntimeError: unexpected audio shape (2, 440320); " \
                                 f"log: {log}"
     assert log.read_text(encoding="utf-8") == stderr
+
+
+def test_problems_name_a_missing_speech_detector(cfg, monkeypatch):
+    worker = ready(cfg, monkeypatch)
+    assert worker.problems(cfg) == []
+    (worker.detector(cfg) / "__init__.py").unlink()
+    worker.detector(cfg).rmdir()
+    assert worker.problems(cfg) == [f"no speech detector in {worker.home(cfg)}; rerun workers/prismaudio/setup.sh"]
+
+
+def test_speech_runs_the_detector_offline_in_the_worker_python(cfg, tmp_path, monkeypatch):
+    worker = ready(cfg, monkeypatch)
+    seen = {}
+
+    def run(args, **kw):
+        seen.update(args=args, **kw)
+        return SimpleNamespace(returncode=0, stdout='{"speech": 0.42}\n', stderr="")
+
+    monkeypatch.setattr("studio.sound.subprocess.run", run)
+    assert worker.speech(cfg, tmp_path / "shot2.wav") == 0.42
+    assert seen["args"] == [str(worker.python(cfg)), "-I", str(sound.SPEECH)]
+    assert json.loads(seen["input"]) == {"wav": str(tmp_path / "shot2.wav")}
+    assert seen["env"]["HF_HUB_OFFLINE"] == "1" and "HF_TOKEN" not in seen["env"]
+
+
+def test_a_failed_speech_check_names_the_track(cfg, tmp_path, monkeypatch):
+    worker = ready(cfg, monkeypatch)
+    monkeypatch.setattr("studio.sound.subprocess.run",
+                        lambda args, **kw: SimpleNamespace(returncode=1, stdout="", stderr="Traceback\nOSError: bad wav"))
+    with pytest.raises(sound.SoundError, match="speech check failed on shot2.wav: OSError: bad wav"):
+        worker.speech(cfg, tmp_path / "shot2.wav")
