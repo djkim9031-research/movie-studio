@@ -72,10 +72,12 @@ class FakeComfy:
 
     def run(self, workflow, timeout_s):
         self.graphs.append(workflow)
+        save_id = next((k for k, n in workflow.items() if n["class_type"] == "SaveImage"), None)
+        if save_id is None:  # the upsampler alone
+            return {"status": {"messages": []}, "outputs": {"34": {"text": ["A man stands on a balcony."]}}}
         out = self.root / "comfy-io" / "output" / "scenes"
         out.mkdir(parents=True, exist_ok=True)
         (out / "x_still1_00001_.png").write_bytes(b"png")
-        save_id = next(k for k, n in workflow.items() if n["class_type"] == "SaveImage")
         status = {"messages": [["execution_cached", {"nodes": [save_id] if self.cached else []}]]}
         return {"status": status, "outputs": {
             "34": {"text": ["Create a photograph of the person in images one and two."]},
@@ -106,3 +108,39 @@ def test_render_still_refuses_an_image_comfyui_took_from_an_earlier_run(tmp_path
     with pytest.raises(stills.RenderError, match="earlier run"):
         stills.render_still(cfg, make_refs(tmp_path), "x", seed=9, size=(1920, 1088), name="x_still1",
                             dest=tmp_path / "out.png")
+
+
+def test_a_graph_with_a_caption_draws_from_it_without_the_upsampler():
+    g = stills.graph(["a.png", "b.png"], ["a_sq.png", "b_sq.png"], "Make it so.", seed=3, size=(1920, 1088),
+                     prefix="p", caption="A man stands on a balcony.")
+    assert not nodes(g, "TextGenerate") and not nodes(g, "PreviewAny") and not nodes(g, "BatchImagesNode")
+    assert g["44"]["inputs"]["text"] == "A man stands on a balcony."
+    assert sorted(n["inputs"]["image"] for n in nodes(g, "LoadImage")) == ["a.png", "b.png"]
+    assert len([k for k in g["46"]["inputs"] if k.startswith("images.")]) == 2
+
+
+def test_upsample_runs_only_the_prompt_upsampler_and_leaves_nothing_in_comfy_io(tmp_path, monkeypatch):
+    cfg = Config.model_validate({"data_root": str(tmp_path)})
+    fake = FakeComfy(tmp_path)
+    monkeypatch.setattr("studio.gpu.runtime.client", lambda c: fake)
+    caption = stills.upsample(cfg, make_refs(tmp_path), "Make it so.", name="x_still1")
+    assert caption == "A man stands on a balcony."
+    g = fake.graphs[0]
+    assert nodes(g, "TextGenerate") and not nodes(g, "SaveImage") and not nodes(g, "KSampler")
+    assert "Make it so." in nodes(g, "TextGenerate")[0]["inputs"]["prompt"]
+    assert sorted(n["inputs"]["image"] for n in nodes(g, "LoadImage")) == \
+        ["x_still1_up1.png", "x_still1_up2.png", "x_still1_up3.png"]
+    assert list((tmp_path / "comfy-io" / "input").iterdir()) == []
+
+
+def test_render_still_with_a_caption_draws_and_reports_that_caption(tmp_path, monkeypatch):
+    cfg = Config.model_validate({"data_root": str(tmp_path)})
+    fake = FakeComfy(tmp_path)
+    monkeypatch.setattr("studio.gpu.runtime.client", lambda c: fake)
+    dest = tmp_path / "still1.png"
+    result = stills.render_still(cfg, make_refs(tmp_path), "Make it so.", seed=9, size=(1920, 1088),
+                                 name="x_still1", dest=dest, caption="A man on a balcony, patched.")
+    assert result.caption == "A man on a balcony, patched." and dest.read_bytes() == b"png"
+    assert fake.graphs[0]["44"]["inputs"]["text"] == "A man on a balcony, patched."
+    assert sorted(n["inputs"]["image"] for n in nodes(fake.graphs[0], "LoadImage")) == \
+        ["x_still1_ref1.png", "x_still1_ref2.png", "x_still1_ref3.png"]
