@@ -168,7 +168,8 @@ carry the rest. The user approved its first five requirements.
   view. Re-framing with Qwen-Image-Edit-2511 and a multi-angle LoRA, the community default, is a later bench entry.
 - Events: a shot's still is drawn without its event; then FLUX redraws the whole frame from an edit instruction (the
   still first, the event pictures after it) and only what the edit added near the event's box is carried into the
-  still, so the rest keeps its own pixels. A masked redraw of the box alone was tried first and drew nothing (four
+  still, so the rest keeps its own pixels. Near means up to a box width to each side and a box height above, but only
+  a quarter of its height below: the person and the railing stand under a far event. A masked redraw of the box alone was tried first and drew nothing (four
   tries on a public harbor view): the model fills a small hole with more of what surrounds it. The redrawn frame
   is softer (a quarter to almost half of the fine detail lost), so it is never used whole. An edit that drew nothing
   near the box gets another seed, three tries in all, then the still is kept without its event and the review page

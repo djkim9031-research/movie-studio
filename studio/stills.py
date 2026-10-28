@@ -24,8 +24,9 @@ PORTRAIT = (1088, 1920)
 CAPTION_NODE = "34"
 SAVE_NODE = "50"
 # Finding what an edit added: a quarter-scale change, smooth colour drift (a Gaussian of DRIFT quarter pixels) taken
-# out, weighted 0 at CHANGE_LO and 1 at CHANGE_HI levels, searched within the box grown by its own size on each side.
-SCALE, DRIFT, CHANGE_LO, CHANGE_HI = 4, 24, 6.0, 14.0
+# out, weighted 0 at CHANGE_LO and 1 at CHANGE_HI levels, searched within the box grown by its width on each side, its
+# height above it and BELOW of its height under it: events rise from where they stand, the foreground is under them.
+SCALE, DRIFT, CHANGE_LO, CHANGE_HI, BELOW = 4, 24, 6.0, 14.0, 0.25
 
 
 def _upsampler(request: str, images: dict) -> dict:
@@ -131,7 +132,8 @@ def blend_event(base: np.ndarray, edit: np.ndarray, box: list[float]) -> tuple[n
             cv2.GaussianBlur(calm, (0, 0), DRIFT), 1e-3)[..., None]
     x0, y0, x1, y1 = box[0] * sw, box[1] * sh, box[2] * sw, box[3] * sh
     near = np.zeros((sh, sw), np.float32)
-    near[int(max(0, 2 * y0 - y1)):int(min(sh, 2 * y1 - y0)), int(max(0, 2 * x0 - x1)):int(min(sw, 2 * x1 - x0))] = 1
+    near[int(max(0, 2 * y0 - y1)):int(min(sh, y1 + BELOW * (y1 - y0))),
+         int(max(0, 2 * x0 - x1)):int(min(sw, 2 * x1 - x0))] = 1
     change = np.abs(d - drift).max(axis=2) * near
     weight = np.clip((change - CHANGE_LO) / (CHANGE_HI - CHANGE_LO), 0, 1)
     weight = cv2.GaussianBlur(cv2.dilate(weight, np.ones((5, 5), np.uint8)), (0, 0), 1.5) * near

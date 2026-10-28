@@ -184,6 +184,17 @@ def test_only_what_the_edit_added_near_the_box_is_kept():
     assert np.array_equal(out[:, :800], base[:, :800])
 
 
+def test_the_search_reaches_up_from_the_box_but_hardly_below_it():
+    import numpy as np
+
+    base = sky()
+    edit = blob(base, 0.65 * 1920, 0.12 * 1088)  # above the box, by less than its height
+    edit = blob(edit, 0.65 * 1920, 0.54 * 1088, r=20)  # where the person stands, under the horizon
+    out, found = stills.blend_event(base, edit, [0.60, 0.20, 0.70, 0.40])
+    assert out[int(0.12 * 1088), int(0.65 * 1920)] == pytest.approx(base[int(0.12 * 1088), int(0.65 * 1920)] + 120, abs=6)
+    assert np.array_equal(out[int(0.46 * 1088):], base[int(0.46 * 1088):])
+
+
 def test_an_edit_that_adds_nothing_near_the_box_finds_no_event():
     import numpy as np
 
