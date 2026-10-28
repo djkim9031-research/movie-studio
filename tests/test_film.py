@@ -191,6 +191,38 @@ def test_an_event_never_drawn_leaves_the_base_still_and_says_so(cfg, tmp_path, r
     assert "Still 1 (picked) (no event drawn)" in (folder / "review.html").read_text()
 
 
+def test_an_event_shot_uses_its_first_still_whose_event_was_drawn(cfg, tmp_path, renders):
+    blast = write(tmp_path / "blast.png", (1300, 800), exif=False)
+    told = plan(3)
+    told["shots"][1].update(event="a small orange flash on the horizon line in the right third, about 4% of the "
+                                  "frame width", event_box=[0.70, 0.30, 0.74, 0.36], event_pictures=[1])
+    painted_px.extend([0, 0, 0])  # candidate 1 never gets its event
+    make(cfg, tmp_path, FakeClaude(told), candidates=2, takes=1, events=[blast])
+    shot = json.loads((cfg.projects_dir / "films" / "ride" / "film.json").read_text())["shots"][1]
+    assert shot["stills"][0]["painted"]["missing"] is True
+    assert shot["still"] == "stills/shot2-2.png" and shot["clip"] == "clips/shot2-2-1.mp4"
+    assert [c[6] for c in renders if c[0] == "clip" and c[1].startswith("ride_shot2-")] == ["shot2-2.png"]
+
+
+def test_the_film_uses_each_stills_least_frozen_take_until_the_user_picks_one(cfg, tmp_path, renders, monkeypatch):
+    frozen = {"shot1-1-1.mp4": 5.06, "shot1-1-2.mp4": 0.06, "shot1-1-3.mp4": 2.1, "shot1-1-4.mp4": 1.0}
+    monkeypatch.setattr("studio.film.triage.clip", lambda cfg, clip, fps: dict(TRIAGE, still_head_s=0.0,
+                                                                               still_tail_s=frozen[clip.name])
+                        if clip.name in frozen else dict(TRIAGE))
+
+    def clip():
+        return json.loads((cfg.projects_dir / "films" / "ride" / "film.json").read_text())["shots"][0]["clip"]
+
+    make(cfg, tmp_path, FakeClaude(plan(3)), candidates=1, takes=3)
+    assert renders[-1] == ("film", ["shot1-1-2.mp4", "shot2-1-1.mp4", "shot3-1-1.mp4"], 5, 16)
+    film.pick(cfg, name="ride", choices={1: (1, 3)}, echo=print)
+    assert clip() == "clips/shot1-1-3.mp4"
+    film.takes(cfg, name="ride", count=4, echo=print)  # more takes keep the user's pick
+    assert clip() == "clips/shot1-1-3.mp4"
+    film.pick(cfg, name="ride", choices={1: (1, None)}, echo=print)  # a still alone gets its steadiest take
+    assert clip() == "clips/shot1-1-2.mp4"
+
+
 def test_pick_changes_the_film_and_takes_fill_in_what_a_pick_needs(cfg, tmp_path, renders):
     make(cfg, tmp_path, FakeClaude(plan(3)), candidates=2, takes=1)
     said = []

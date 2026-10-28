@@ -23,9 +23,11 @@ LANDSCAPE = (1920, 1088)
 PORTRAIT = (1088, 1920)
 CAPTION_NODE = "34"
 SAVE_NODE = "50"
-# Finding what an edit added: a quarter-scale change, smooth colour drift (a Gaussian of DRIFT quarter pixels) taken
-# out, weighted 0 at CHANGE_LO and 1 at CHANGE_HI levels, searched within the box grown by its width on each side, its
-# height above it and BELOW of its height under it: events rise from where they stand, the foreground is under them.
+# Finding what an edit added: a quarter-scale change with the smooth colour drift (a Gaussian of DRIFT quarter pixels)
+# taken out, counted only where the edit leaves the range the base holds within one quarter pixel (an edge the redraw
+# moved is no change), weighted 0 at CHANGE_LO and 1 at CHANGE_HI levels. A region of change is kept whole when it
+# reaches into the box and stays within the box grown by its width on each side, its height above it and BELOW of its
+# height under it (events rise from where they stand, the foreground is under them); any other is left out whole.
 SCALE, DRIFT, CHANGE_LO, CHANGE_HI, BELOW = 4, 24, 6.0, 14.0, 0.25
 
 
@@ -114,33 +116,39 @@ def graph(files: list[str], squares: list[str], request: str, *, seed: int, size
 
 
 def blend_event(base: np.ndarray, edit: np.ndarray, box: list[float]) -> tuple[np.ndarray, int]:
-    """`base` with what `edit` (the same frame redrawn with an event added) changed near `box` ([left, top, right,
-    bottom] fractions) carried over through a soft mask, and the number of pixels it carried over. Away from the box,
-    and wherever the edit only drifted in colour, the base stays exactly as it was; a sharp edge near the box that the
-    edit moved by a pixel or two comes over with the event. Float RGB arrays (h, w, 3)."""
+    """`base` with what `edit` (the same frame redrawn with an event added) drew into `box` ([left, top, right,
+    bottom] fractions) carried over through a soft mask, and the number of carried pixels inside the box. Each region
+    of change comes over whole or not at all, so nothing is cut at an edge. Elsewhere, and wherever the edit only
+    drifted in colour or moved an edge by a few pixels, the base stays exactly as it was. Float RGB arrays (h, w, 3)."""
     h, w = base.shape[:2]
     sw, sh = w // SCALE, h // SCALE
 
     def small(a):
         return cv2.GaussianBlur(cv2.resize(a, (sw, sh), interpolation=cv2.INTER_AREA), (0, 0), 1.0)
 
-    d = small(edit) - small(base)
+    b, e = small(base), small(edit)
+    d = e - b
     drift = cv2.GaussianBlur(d, (0, 0), DRIFT)
     for _ in range(2):  # the drift again from the pixels that only drifted, so the event does not dim itself
         calm = (np.abs(d - drift).max(axis=2) < CHANGE_LO).astype(np.float32)
         drift = cv2.GaussianBlur(d * calm[..., None], (0, 0), DRIFT) / np.maximum(
             cv2.GaussianBlur(calm, (0, 0), DRIFT), 1e-3)[..., None]
-    x0, y0, x1, y1 = box[0] * sw, box[1] * sh, box[2] * sw, box[3] * sh
-    near = np.zeros((sh, sw), np.float32)
-    near[int(max(0, 2 * y0 - y1)):int(min(sh, y1 + BELOW * (y1 - y0))),
-         int(max(0, 2 * x0 - x1)):int(min(sw, 2 * x1 - x0))] = 1
-    change = np.abs(d - drift).max(axis=2) * near
+    e, pixel = e - drift, np.ones((3, 3), np.uint8)
+    change = np.maximum(e - cv2.dilate(b, pixel), cv2.erode(b, pixel) - e).max(axis=2)
     weight = np.clip((change - CHANGE_LO) / (CHANGE_HI - CHANGE_LO), 0, 1)
-    weight = cv2.GaussianBlur(cv2.dilate(weight, np.ones((5, 5), np.uint8)), (0, 0), 1.5) * near
+    count, labels, stats, _ = cv2.connectedComponentsWithStats((weight > 0).astype(np.uint8), connectivity=8)
+    x0, y0, x1, y1 = box[0] * sw, box[1] * sh, box[2] * sw, box[3] * sh
+    keep = np.zeros(count, bool)
+    keep[np.unique(labels[int(y0):int(np.ceil(y1)), int(x0):int(np.ceil(x1))])] = True
+    left, top, right, bottom = stats[:, 0], stats[:, 1], stats[:, 0] + stats[:, 2], stats[:, 1] + stats[:, 3]
+    keep &= (left >= 2 * x0 - x1) & (right <= 2 * x1 - x0) & (top >= 2 * y0 - y1) & (bottom <= y1 + BELOW * (y1 - y0))
+    keep[0] = False
+    weight = cv2.GaussianBlur(cv2.dilate(weight * keep[labels], np.ones((5, 5), np.uint8)), (0, 0), 1.5)
     mask = cv2.resize(weight, (w, h), interpolation=cv2.INTER_LINEAR)[..., None]
     shift = cv2.resize(drift, (w, h), interpolation=cv2.INTER_LINEAR)
     out = np.where(mask > 0, base * (1 - mask) + (edit - shift) * mask, base)
-    return out, int((mask > 0.5).sum())
+    inside = mask[int(box[1] * h):int(box[3] * h), int(box[0] * w):int(box[2] * w)]
+    return out, int((inside > 0.5).sum())
 
 
 @dataclass

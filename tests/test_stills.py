@@ -167,32 +167,59 @@ def blob(img, cx, cy, r=30, lift=120.0):
     return img + lift * np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * r**2))[..., None]
 
 
-def test_only_what_the_edit_added_near_the_box_is_kept():
+def test_what_the_edit_drew_into_the_box_is_carried_whole_and_nothing_else():
     import numpy as np
 
     base = sky()
+    base[150:153, 1000:1250] = 230  # a wire across the box
     drift = np.array([5.0, 1.0, -2.0], np.float32)  # the redrawn frame's colour shift
     edit = base + drift
-    edit = blob(edit, 0.73 * 1920, 0.2 * 1088)  # beside the box, still near it
+    edit = blob(edit, 0.71 * 1920, 0.2 * 1088)  # mostly beyond the box's right edge, reaching into it
     edit = blob(edit, 200, 200)  # far from the box
+    edit[150:153, 1000:1250], edit[152:155, 1000:1250] = base[147:150, 1000:1250] + drift, 230  # the wire moved 2 px
     edit[1000:1003], edit[1002:1005] = base[1003:1006] + drift, 230  # the parapet moved by 2 px
-    out, found = stills.blend_event(base, edit, [0.60, 0.10, 0.70, 0.30])
-    assert found > 1000
-    assert out[int(0.2 * 1088), int(0.73 * 1920)] == pytest.approx(base[int(0.2 * 1088), int(0.73 * 1920)] + 120, abs=6)
+    box = [0.60, 0.10, 0.70, 0.30]
+    out, found = stills.blend_event(base, edit, box)
+    y, x = int(0.2 * 1088), int(0.71 * 1920)
+    assert out[y, x] == pytest.approx(base[y, x] + 120, abs=6)
+    assert out[y, x + 40] == pytest.approx(base[y, x + 40] + 120 * np.exp(-40**2 / 1800), abs=6)  # not cut at the box
+    assert 1000 < found <= (0.70 - 0.60) * 1920 * (0.30 - 0.10) * 1088  # counted inside the box only
+    assert np.array_equal(out[140:165, 1000:1240], base[140:165, 1000:1240])
     assert np.array_equal(out[150:250, 150:250], base[150:250, 150:250])  # the far change stays out
     assert np.array_equal(out[990:1010], base[990:1010])
     assert np.array_equal(out[:, :800], base[:, :800])
+
+
+def test_a_change_that_runs_out_of_the_search_window_is_left_out_whole():
+    import numpy as np
+
+    base = sky()
+    edit = base.copy()
+    edit[150:300, 700:1250] += 60  # through the box and far out to its left, as a redrawn person would be
+    edit = blob(edit, 1320, 130, r=10)  # a separate small event inside the box
+    out, found = stills.blend_event(base, edit, [0.60, 0.10, 0.70, 0.30])
+    assert np.array_equal(out[140:310, 690:1250], base[140:310, 690:1250])  # no part of it, so no cut
+    assert out[130, 1320] == pytest.approx(base[130, 1320] + 120, abs=8) and found > 0
 
 
 def test_the_search_reaches_up_from_the_box_but_hardly_below_it():
     import numpy as np
 
     base = sky()
-    edit = blob(base, 0.65 * 1920, 0.12 * 1088)  # above the box, by less than its height
-    edit = blob(edit, 0.65 * 1920, 0.54 * 1088, r=20)  # where the person stands, under the horizon
+    edit = blob(base, 1248, 0.17 * 1088)  # rising above the box, its foot inside it
+    edit[300:760, 1240:1260] += 80  # a post from inside the box down into the foreground
     out, found = stills.blend_event(base, edit, [0.60, 0.20, 0.70, 0.40])
-    assert out[int(0.12 * 1088), int(0.65 * 1920)] == pytest.approx(base[int(0.12 * 1088), int(0.65 * 1920)] + 120, abs=6)
-    assert np.array_equal(out[int(0.46 * 1088):], base[int(0.46 * 1088):])
+    y = int(0.17 * 1088)
+    assert out[y, 1248] == pytest.approx(base[y, 1248] + 120, abs=6)
+    assert np.array_equal(out[300:770, 1230:1270], base[300:770, 1230:1270])
+
+
+def test_an_event_drawn_beside_the_box_without_reaching_into_it_is_not_taken():
+    import numpy as np
+
+    base = sky()
+    out, found = stills.blend_event(base, blob(base, 1032, 0.2 * 1088), [0.60, 0.10, 0.70, 0.30])
+    assert found == 0 and np.array_equal(out, base)
 
 
 def test_an_edit_that_adds_nothing_near_the_box_finds_no_event():

@@ -164,10 +164,12 @@ your photos + pictures of the place + a prompt (+ pictures of the event)
   |   Image Klein)       front, three quarters, back) and 3 pictures of each view, drawn from the first set picture
   4. stills (FLUX 3      3 stills per shot, drawn from your photos, the first sheet and the shot's view; each caption
   |   Image Klein)       is checked for the fixed phrases before drawing; an event is painted into its box after
-  5. takes (Wan 2.2)     4 clips of 5 s of each shot's picked still (the first until you pick), 1280x704, 16 fps
+  5. takes (Wan 2.2)     4 clips of 5 s of each shot's picked still (until you pick, the first with its event
+  |                      drawn), 1280x704, 16 fps
   |                      (4-step lightx2v LoRAs), each scored for motion, still ends and color drift; every still
   |                      is drawn before the first clip, so the GPU swaps models once
-  6. film (FFmpeg)       each shot's picked take, cut to whole seconds, joined with hard cuts, H.264
+  6. film (FFmpeg)       each shot's picked take (until you pick, the one with the least frozen time), cut to
+  |                      whole seconds, joined with hard cuts, H.264
   v
 projects/films/NAME/film.mp4 and review.html (every candidate and take; the ones in the film marked)
 ```
@@ -197,8 +199,8 @@ projects/films/NAME/film.mp4 and review.html (every candidate and take; the ones
 3. Open `~/studio-data/projects/films/ride/review.html`: the film at the top (with sound, once added), the look,
    then each shot's stills and takes with their numbers and prompts.
 
-4. Change the cut: `uv run studio film pick --name ride 2=3 4=1.2` gives shot 2 its still 3 (with that still's first
-   take) and shot 4 take 2 of its still 1, and joins the film again. A still without takes gets them with
+4. Change the cut: `uv run studio film pick --name ride 2=3 4=1.2` gives shot 2 its still 3 (with that still's take
+   with the least frozen time) and shot 4 take 2 of its still 1, and joins the film again. A still without takes gets them with
    `uv run studio film takes --name ride` (4 per still by default). After a new cut, run `film sound` again.
 
 Options: `--shots N` (3 to 6), `--seconds N` per shot (Wan 2.2 is trained on 5; longer shots are possible but may

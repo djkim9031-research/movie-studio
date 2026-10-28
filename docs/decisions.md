@@ -167,13 +167,22 @@ carry the rest. The user approved its first five requirements.
 - Views: each view gets its own pictures, drawn from the first set picture alone, and every shot references its
   view. Re-framing with Qwen-Image-Edit-2511 and a multi-angle LoRA, the community default, is a later bench entry.
 - Events: a shot's still is drawn without its event; then FLUX redraws the whole frame from an edit instruction (the
-  still first, the event pictures after it) and only what the edit added near the event's box is carried into the
-  still, so the rest keeps its own pixels. Near means up to a box width to each side and a box height above, but only
-  a quarter of its height below: the person and the railing stand under a far event. A masked redraw of the box alone was tried first and drew nothing (four
-  tries on a public harbor view): the model fills a small hole with more of what surrounds it. The redrawn frame
-  is softer (a quarter to almost half of the fine detail lost), so it is never used whole. An edit that drew nothing
-  near the box gets another seed, three tries in all, then the still is kept without its event and the review page
-  says so. Events are capped at 30% of the frame width; bigger spectacle is implied.
+  still first, the event pictures after it) and what the edit drew into the event's box is carried into the still,
+  each region of change whole or not at all, so the rest keeps its own pixels and nothing is cut at an edge. A region
+  counts when it reaches into the box and stays within a box width to each side, a box height above and a quarter of
+  its height below: the person and the railing stand under a far event, and a redrawn person beside the box is left
+  out whole. An edge the redraw only moved by a few pixels is no change. A masked redraw of the box alone was tried
+  first and drew nothing (four tries on a public harbor view): the model fills a small hole with more of what
+  surrounds it. The redrawn frame is softer (a quarter to almost half of the fine detail lost), so it is never used
+  whole. An edit that drew less than a tenth of the box inside it gets another seed, three tries in all, then the
+  still is kept without its event and the review page says so. Events are capped at 30% of the frame width; bigger
+  spectacle is implied.
+- The first blend (b97004b) carried every change within that area and clipped it at the area's edge. On meteor-v5
+  the clip line left steps in all six event stills (29 to 68 px of one side above 6 levels, the largest 132 to 158
+  levels), and on the public harbor view a blast the edit drew beside its box was cut by a straight edge. The whole-region rule refuses four of
+  meteor-v5's six edits, which then get new seeds.
+- Until the user picks, a shot uses its first still whose event was drawn, and each still its take with the least
+  frozen time at its head and tail: meteor-v5's first take of its meteor shot stood still for all of its 5 s.
 - Takes: four takes of each shot's picked still instead of two takes of every still; `film pick` and `film takes`
   change the cut. Each take gets numbers that sort without faces (motion, still ends, color drift); the user picks.
 - Sound in layers: one bed under the whole film, Foley only for shots with their own sound (8 s windows), a speech

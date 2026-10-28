@@ -144,6 +144,19 @@ def _paint(cfg: Config, folder: Path, shot: dict, light: str, base: Path, dest: 
     return entry
 
 
+def _first_drawn(shot: dict) -> str:
+    """The still a shot uses until the user picks: its first candidate whose event was drawn, else its first."""
+    drawn = [s for s in shot["stills"] if not s.get("painted", {}).get("missing")]
+    return (drawn or shot["stills"])[0]["file"]
+
+
+def _steadiest(shot: dict, still: int) -> str | None:
+    """The still's take with the least frozen time at its head and tail (the first of equals), or None."""
+    mine = [t for t in shot["takes"] if t["still"] == still]
+    frozen = [t.get("triage", {}).get("still_head_s", 0) + t.get("triage", {}).get("still_tail_s", 0) for t in mine]
+    return min(zip(frozen, range(len(mine)), mine))[2]["file"] if mine else None
+
+
 def _picked(shot: dict) -> int:
     picked = next((i for i, still in enumerate(shot["stills"], start=1) if still["file"] == shot["still"]), None)
     if picked is None:
@@ -156,8 +169,10 @@ def _clip_size(data: dict) -> tuple[int, int]:
 
 
 def _takes(cfg: Config, folder: Path, data: dict, shot: dict, count: int, echo) -> None:
-    """Takes of the shot's picked still until it has `count`, each with its triage numbers."""
+    """Takes of the shot's picked still until it has `count`, each with its triage numbers. Unless the shot's clip is
+    already one of them, the film uses the steadiest."""
     n, k = shot["n"], _picked(shot)
+    chosen = any(t["file"] == shot["clip"] and t["still"] == k for t in shot["takes"])
     for t in range(len([t for t in shot["takes"] if t["still"] == k]) + 1, count + 1):
         seed, dest = secrets.randbelow(2**31), private_dir(folder / "clips") / f"shot{n}-{k}-{t}.mp4"
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,8 +184,8 @@ def _takes(cfg: Config, folder: Path, data: dict, shot: dict, count: int, echo) 
         take = {"still": k, "take": t, "file": f"clips/{dest.name}", "seed": seed, "s": round(result.elapsed_s, 1),
                 "triage": triage.clip(cfg, dest, data["fps"])}
         shot["takes"].append(take)
-        if not any(t["file"] == shot["clip"] and t["still"] == k for t in shot["takes"]):
-            shot["clip"] = take["file"]
+        if not chosen:
+            shot["clip"] = _steadiest(shot, k)
         _save(folder, data)
         echo(f"clip  {n}/{len(data['shots'])}  still {k} take {t}/{count}  seed {seed}, {result.elapsed_s:.1f} s, "
              f"motion {take['triage']['motion']} -> {dest}")
@@ -211,8 +226,9 @@ def make(cfg: Config, *, name: str, prompt: str, pictures: list[Path], shots: in
     """References and the plan first (no GPU). Then inside `gpu()`: `candidates` set pictures and character sheets,
     `candidates` pictures of each view drawn from the first set picture, `candidates` stills per shot drawn from the
     photos, the first sheet and the shot's view (with its event painted into its box), and `takes` clips of each
-    shot's picked still (the first until the user picks), so the GPU swaps models once. Then the film from the
-    picks; pick() and takes() change them later."""
+    shot's picked still (until the user picks, the first with its event drawn), so the GPU swaps models once. Then
+    the film from the picks (until the user picks, each still's steadiest take); pick() and takes() change them
+    later."""
     name = clean_name(name)
     folder = film_dir(cfg, name)
     if (folder / "film.json").exists():
@@ -299,7 +315,7 @@ def make(cfg: Config, *, name: str, prompt: str, pictures: list[Path], shots: in
                                               name=f"{name}_shot{n}-{c}-event", label=f"shot {n} candidate {c}",
                                               echo=echo)
                 shot["stills"].append(entry)
-                shot["still"] = shot["still"] or entry["file"]
+                shot["still"] = _first_drawn(shot)
                 _save(folder, data)
                 echo(f"still {n}/{shots}  candidate {c}/{candidates}  seed {seed}, {entry['s']} s -> {dest}")
         for shot in data["shots"]:
@@ -309,8 +325,8 @@ def make(cfg: Config, *, name: str, prompt: str, pictures: list[Path], shots: in
 
 
 def pick(cfg: Config, *, name: str, choices: dict[int, tuple[int, int | None]], echo) -> dict:
-    """`choices` maps a shot to (still, take); take None means the still's first take. The film is cut again from
-    the picks once every shot has a take of its picked still."""
+    """`choices` maps a shot to (still, take); take None means the still's steadiest take. The film is cut again
+    from the picks once every shot has a take of its picked still."""
     folder, data = load(cfg, name)
     by = {s["n"]: s for s in data["shots"]}
     for n, (still, take) in sorted(choices.items()):
@@ -323,8 +339,8 @@ def pick(cfg: Config, *, name: str, choices: dict[int, tuple[int, int | None]], 
     for n, (still, take) in choices.items():
         shot = by[n]
         shot["still"] = shot["stills"][still - 1]["file"]
-        mine = [t for t in shot["takes"] if t["still"] == still and (take is None or t["take"] == take)]
-        shot["clip"] = mine[0]["file"] if mine else None
+        shot["clip"] = _steadiest(shot, still) if take is None else next(
+            t["file"] for t in shot["takes"] if t["still"] == still and t["take"] == take)
     _rebuild(cfg, folder, data, echo)
     return data
 

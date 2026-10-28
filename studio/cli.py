@@ -706,7 +706,7 @@ def _report_cut(data: dict, cfg) -> None:
 
 @film_app.command("pick")
 def film_pick(choices: list[str] = typer.Argument(..., help="SHOT=STILL or SHOT=STILL.TAKE, for example 2=3 or 2=3.1; "
-                                                            "a still without a take uses its first take."),
+                                                            "a still without a take uses its steadiest take."),
               name: str = typer.Option(..., help="Film name.")):
     """Choose which still and take each shot uses, then cut the film again from the picks."""
     cfg = _state["cfg"]
