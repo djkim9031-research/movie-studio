@@ -30,7 +30,10 @@ def shot(n):
 
 
 def plan(count):
-    return {"title": "Ride at the Palace", "shots": [shot(n) for n in range(1, count + 1)]}
+    return {"title": "Ride at the Palace",
+            "set_request": "Create a photograph of the place shown in image 1 ... the palace courtyard, no people",
+            "sheet_request": "Create a character sheet of the person shown in images 1-6 ... a light blue hanbok",
+            "shots": [shot(n) for n in range(1, count + 1)]}
 
 
 def write(claude, shots=4, user_prompt="me riding a horse in front of the palace"):
@@ -60,8 +63,20 @@ def test_write_sends_only_text_and_returns_the_asked_shots():
     assert all(block["type"] == "text" for block in params["system"])
     assert params["output_config"]["format"]["type"] == "json_schema"
     sent = params["messages"][0]["content"][0]["text"]
-    assert "me riding a horse in front of the palace" in sent
-    assert "4 shots of 5 seconds" in sent and "Images 1-6: six photos of the same person" in sent
+    assert "me riding a horse in front of the palace" in sent and "4 shots of 5 seconds" in sent
+    assert made.set_request.startswith("Create a photograph of the place")
+    assert made.sheet_request.startswith("Create a character sheet")
+
+
+def test_the_references_are_numbered_for_the_set_the_sheet_and_the_shots():
+    claude = FakeClaude(plan(4))
+    film_prompts.write(claude, film="film-ride", user_prompt="me riding a horse in front of the palace",
+                       report=report(extras=("palace_gate", "crowd")), orientation="landscape", shots=4, seconds=5)
+    text = sent(claude, 0)
+    assert 'Set picture: image 1: a picture of the place without people, file name "palace gate".' in text
+    assert "Character sheet: images 1-6: six photos of the same person (square face crops)." in text
+    assert "Each shot: images 1-6: the person's photos; image 7: the character sheet; image 8: the set picture." in text
+    assert "crowd" not in text  # a picture of other people is not used
 
 
 def test_a_plan_with_another_number_of_shots_is_an_error():
@@ -141,3 +156,22 @@ def test_the_film_has_its_own_rules_and_the_scene_flow_keeps_its_likeness_rule()
     assert scene_prompts.STILL_RULES not in film_prompts.SYSTEM
     assert "face toward the camera" not in film_prompts.SYSTEM
     assert "the face toward the camera or at three quarters" in scene_prompts.STILL_RULES
+
+
+def test_the_sheet_may_face_the_camera_but_keeps_a_neutral_face():
+    bad = copy.deepcopy(plan(4))
+    bad["sheet_request"] = "Create a character sheet ... the front view facing the camera, a shocked face"
+    claude = FakeClaude([bad, plan(4)])
+    write(claude)
+    repair = sent(claude, 1)
+    assert "sheet request: strong expression (shocked)" in repair and "looks at the camera" not in repair
+
+
+def test_event_pictures_are_numbered_for_the_shots_only():
+    claude = FakeClaude(plan(4))
+    film_prompts.write(claude, film="film-ride", user_prompt="me riding a horse in front of the palace",
+                       report=report(extras=("palace_gate", "fireworks")), orientation="landscape", shots=4,
+                       seconds=5, events={"fireworks.png"})
+    text = sent(claude, 0)
+    assert 'Set picture: image 1: a picture of the place without people, file name "palace gate".' in text
+    assert ('image 8: the set picture; image 9: a picture of the event, file name "fireworks".') in text

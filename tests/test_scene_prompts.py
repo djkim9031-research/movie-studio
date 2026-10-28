@@ -13,7 +13,8 @@ def report(people=6, extras=("saturn_cassini",)):
     for i in range(people):
         r.used.append(Reference("person", Path(f"person{i + 1}.png"), Path(f"person{i + 1}.png"), f"p{i}.jpg"))
     for name in extras:
-        r.used.append(Reference("extra", Path("extra.png"), Path("extra_square.png"), f"{name}.png"))
+        r.used.append(Reference("extra", Path("extra.png"), Path("extra_square.png"), f"{name}.png",
+                                faces_blurred=name == "crowd"))
     return r
 
 

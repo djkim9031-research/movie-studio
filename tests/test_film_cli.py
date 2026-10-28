@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -43,6 +44,7 @@ def setup(tmp_path, monkeypatch):
     (tmp_path / "pictures").mkdir()
     write(tmp_path / "pictures" / "a.jpg", (2000, 1500))
     write(tmp_path / "pictures" / "b.jpg", (1800, 1500))
+    write(tmp_path / "pictures" / "moon.png", (1400, 700), exif=False)
     return cfg_file, tmp_path / "pictures", tmp_path / "data" / "projects" / "films"
 
 
@@ -121,3 +123,13 @@ def test_film_sound_runs_beside_nomachines_screen_encoder(setup, monkeypatch):
     result = CliRunner().invoke(app, ["--config", str(cfg_file), "film", "sound", "--name", "ride"])
     assert result.exit_code == 0, result.output
     assert f"PASS  {films / 'ride' / 'film-sound.mp4'}" in result.output
+
+
+def test_film_make_takes_candidates_takes_and_event_pictures(setup, tmp_path):
+    cfg_file, pictures, films = setup
+    blast = write(tmp_path / "blast.png", (1200, 800), exif=False)
+    result = make(cfg_file, pictures, "--candidates", "2", "--takes", "1", "--event", str(blast))
+    assert result.exit_code == 0, result.output
+    data = json.loads((films / "ride" / "film.json").read_text())
+    assert (data["candidates"], data["takes"]) == (2, 1) and len(data["shots"][0]["stills"]) == 2
+    assert {r["source"]: r["role"] for r in data["references"]}["blast.png"] == "event"

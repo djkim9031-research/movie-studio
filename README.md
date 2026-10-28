@@ -152,20 +152,22 @@ For a film with sound, set up once: Setup above, step 1 below and the sound work
 two commands: `studio film make` (step 2) for the picture and `studio film sound` for its sound.
 
 ```
-your photos + pictures of places or things + a prompt
+your photos + pictures of the place + a prompt (+ pictures of the event)
   |
   1. references (CPU)    as for a scene: up to 6 face crops of the person, other pictures whole
   |
-  2. shot plan (Claude)  your words -> a title and 3-6 shots, each with a still request, a motion prompt and a
-  |                      sound prompt; Claude gets text only, and a plan that breaks a checked rule goes back
-  |                      to it, at most twice
-  3. stills (FLUX 3      one 1920x1088 still per shot from the references
-  |   Image Klein)
-  4. clips (Wan 2.2)     each still becomes a 5 s clip at 1280x704, 16 fps (4-step lightx2v LoRAs); every still is
-  |                      drawn before the first clip, so the GPU swaps models once
-  5. film (FFmpeg)       each clip cut to whole seconds, joined with hard cuts, H.264
+  2. shot plan (Claude)  your words -> a title, a set request, a character sheet request and 3-6 shots, each with
+  |                      a still request, a motion prompt and a sound prompt; Claude gets text only, and a plan
+  |                      that breaks a checked rule goes back to it, at most twice
+  3. look (FLUX 3        3 set pictures (the place, no people) and 3 character sheets (you in the film's clothes:
+  |   Image Klein)       front, three quarters, back), 1920x1088
+  4. stills (FLUX 3      3 stills per shot, drawn from your photos, the first sheet, the first set picture and the
+  |   Image Klein)       event pictures
+  5. takes (Wan 2.2)     2 clips of 5 s per still at 1280x704, 16 fps (4-step lightx2v LoRAs); every still is drawn
+  |                      before the first clip, so the GPU swaps models once
+  6. film (FFmpeg)       each shot's first still's first take, cut to whole seconds, joined with hard cuts, H.264
   v
-projects/films/NAME/film.mp4 and review.html
+projects/films/NAME/film.mp4 and review.html (every candidate and take; the ones in the film marked)
 ```
 
 1. Download the video models once (73 GB):
@@ -183,16 +185,21 @@ projects/films/NAME/film.mp4 and review.html
      ~/pictures/palace
    ```
 
-   Four shots take about 25 minutes: two and a half minutes per still, three per clip, and the model loads.
-   Claude's shot plan costs about $0.08, up to three times that when it is sent back. Claude stages the shots from
-   your words: the person looks at what happens (wide shots from behind, reaction shots at three quarters), not into
-   the lens unless you ask.
+   The folder needs at least one picture of the place without people: the set picture is drawn from it. Pictures of
+   other people are not used. Four shots take about 2 hours with the defaults: 18 stills at two and a half minutes,
+   24 clips at three, and the model loads; `--candidates 1 --takes 1` takes about half an hour. Claude's shot plan
+   costs about $0.08, up to three times that when it is sent back. Claude stages the shots from your words: the
+   person looks at what happens (wide shots from behind, reaction shots at three quarters), not into the lens unless
+   you ask.
 
 3. Open `~/studio-data/projects/films/ride/review.html`: the film at the top (with sound, once added), then each
    shot's still, clip and prompts.
 
 Options: `--shots N` (3 to 6), `--seconds N` per shot (Wan 2.2 is trained on 5; longer shots are possible but may
-repeat motion), `--portrait`, `--keep-up`. A name is used once; pick a new one for another take.
+repeat motion), `--candidates N` (1 to 6: set pictures, sheets and stills per shot, default 3), `--takes N` (1 to 4
+clips per still, default 2), `--event PICTURE` (a picture of what happens, for example a real blast over the sea; it
+goes to every shot and never to the set; repeat for more), `--portrait`, `--keep-up`. A name is used once; pick a new
+one for another film.
 
 The film is silent: Wan 2.2 makes no sound. The shot plan already holds a sound prompt per shot, and
 `uv run studio film sound --name ride` turns it into film-sound.mp4 once the sound worker is set up (see Sound).
@@ -202,8 +209,11 @@ The film is silent: Wan 2.2 makes no sound. The shot plan already holds a sound 
 `~/studio-data/projects/films/NAME/`:
 
 - `refs/`: the references as used
-- `stills/shotN.png` and `stills/shotN.graph.json`: each shot's still and the ComfyUI graph that drew it
-- `clips/shotN.mp4`: each shot's clip, silent
+- `look/setN.png` and `look/sheetN.png`: the set picture and character sheet candidates; the stills are drawn from
+  the first of each
+- `stills/shotN-C.png` and `stills/shotN-C.graph.json`: candidate C of shot N's still and the ComfyUI graph that
+  drew it
+- `clips/shotN-C-T.mp4`: take T of still C, silent; the film uses each shot's `shotN-1-1.mp4`
 - `sound/shotN.wav`: each shot's sound track, once sound is added; 0.5 s longer at both ends for the crossfades
 - `film.mp4`: the shots joined; `film-sound.mp4` once sound is added
 - `film.json`: the prompt, the title, every prompt Claude wrote, seeds, timings and model versions

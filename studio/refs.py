@@ -315,9 +315,9 @@ def gather(paths: list[Path], limit: int = MAX_PICTURES) -> tuple[list[Path], li
     return pictures, skipped
 
 
-def prepare(pictures: list[Path], out: Path, tools) -> Report:
+def prepare(pictures: list[Path], out: Path, tools, limit: int = MAX_REFERENCES) -> Report:
     """Faces are found picture by picture; only the pictures used are read again, so a folder of photos never sits
-    in memory at once."""
+    in memory at once. At most `limit` references in all: one still takes MAX_REFERENCES."""
     if not pictures:
         raise ValueError("no pictures given")
     out = private_dir(out)
@@ -342,8 +342,8 @@ def prepare(pictures: list[Path], out: Path, tools) -> Report:
             continue
         if faces[key] and key in subject_keys:
             report.skipped.append((name, f"not among the {MAX_PERSON} best faces"))
-        elif len(report.used) >= MAX_REFERENCES:
-            report.skipped.append((name, f"over the {MAX_REFERENCES}-reference limit"))
+        elif len(report.used) >= limit:
+            report.skipped.append((name, f"over the {limit}-reference limit"))
         else:
             # Pictures of other people are kept for their clothing, props or place, with every face blurred.
             extras += 1

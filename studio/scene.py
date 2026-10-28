@@ -51,7 +51,7 @@ def _models(cfg: Config) -> dict:
             (("stills", "flux3-klein"), ("clips", "ltx25-int8")) if name in cfg.models}
 
 
-def references(pictures: list[Path], folder: Path, tools, echo) -> refs.Report:
+def references(pictures: list[Path], folder: Path, tools, echo, limit: int = refs.MAX_REFERENCES) -> refs.Report:
     """The usable pictures as references in folder/refs, each one reported."""
     try:
         pictures, unreadable = refs.gather(pictures)
@@ -62,7 +62,7 @@ def references(pictures: list[Path], folder: Path, tools, echo) -> refs.Report:
     if not pictures:
         raise SceneError("no pictures found")
     private_dir(folder)
-    report = refs.prepare(pictures, folder / "refs", tools)
+    report = refs.prepare(pictures, folder / "refs", tools, limit)
     for ref in report.used:
         if ref.kind == "person":
             detail = f"face {ref.face_px} px, sharpness {ref.sharpness:.0f}"

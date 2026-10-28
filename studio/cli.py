@@ -651,15 +651,24 @@ def film_make(pictures: list[Path] = typer.Argument(..., help="A folder of pictu
               seconds: int = typer.Option(5, min=2, max=10, help="Shot length in whole seconds; Wan 2.2 is trained "
                                                                  "on 5."),
               portrait: bool = typer.Option(False, "--portrait", help="9:16 instead of 16:9."),
+              candidates: int = typer.Option(3, min=1, max=6, help="Candidates of the set picture, the character "
+                                                                   "sheet and each shot's still; the film uses the "
+                                                                   "first of each."),
+              takes: int = typer.Option(2, min=1, max=4, help="Clips made from each still; the film uses the first."),
+              events: list[Path] = typer.Option(None, "--event", help="A picture of what happens (for example a "
+                                                                      "real blast over the sea): it goes to every "
+                                                                      "shot, never to the set. Repeat for more."),
               keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
-    """References from your pictures, a shot plan from Claude (text only), then a FLUX 3 Klein still and a Wan 2.2
-    clip per shot, joined into one silent MP4."""
+    """References from your pictures and a shot plan from Claude (text only); then the look (a set picture and a
+    character sheet), each shot's stills drawn from it and the takes of every still, joined into one silent MP4 from
+    the first of each."""
     cfg = _state["cfg"]
     _models_or_exit(cfg, film.MODEL_SETS)
     try:
         made = film.make(cfg, name=name, prompt=prompt, pictures=pictures, shots=shots, seconds=seconds,
                          portrait=portrait, claude=Claude(cfg), tools=face_tools(cfg), echo=typer.echo,
-                         gpu=lambda: _comfy_session(cfg, keep_up))
+                         gpu=lambda: _comfy_session(cfg, keep_up), candidates=candidates, takes=takes,
+                         events=events or [])
     except FILM_ERRORS as error:
         typer.echo(f"FAIL  {error}")
         raise typer.Exit(1)

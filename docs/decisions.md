@@ -136,3 +136,17 @@
   PrismAudio makes what it reads.
 - The code checks a plan for gaze at the camera, strong expression words and negated or voice words in sound
   prompts (words from the user's own description pass), sends it back with the problems at most twice, then stops.
+
+## 2026-10-28: look first
+
+- meteor-v2 still looked generated and inconsistent: every still was drawn from words and loose references, so the
+  place, the light and the clothes were invented anew in each shot. A film now draws its look first: set pictures
+  (the place at the scene's light, no people, from the pictures of the place) and character sheets (the person in the
+  film's clothes, front, three quarters and back, from the photos). Every shot's still is drawn from the photos, the
+  first set picture and the first sheet, so the place and the clothes come from pictures, not words.
+- Several candidates of each picture and several takes of each still; the film uses the first of each until the user
+  picks.
+- The set pictures and sheets are FLUX outputs: they reach the image model as references only, resized and padded,
+  never through face detection.
+- Pictures of the event (`--event`) go to every shot and never to the set; pictures of other people are not used.
+- One still takes at most 10 references, so a film checks that per still and allows up to 30 pictures in all.
