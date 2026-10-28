@@ -657,13 +657,13 @@ def film_make(pictures: list[Path] = typer.Argument(..., help="A folder of pictu
               takes: int = typer.Option(4, min=1, max=8, help="Clips made from each shot's picked still (the first "
                                                               "until you pick); the film uses the first."),
               events: list[Path] = typer.Option(None, "--event", help="A picture of what happens (for example a "
-                                                                      "real blast over the sea): it goes to the "
-                                                                      "shots whose still names it, never to the set. "
-                                                                      "Repeat for more."),
+                                                                      "real blast over the sea): a shot's event is "
+                                                                      "painted from it into the event's box, never "
+                                                                      "into the set. Repeat for more."),
               keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
-    """References from your pictures and a shot plan from Claude (text only); then the look (a set picture and a
-    character sheet), each shot's stills drawn from it and the takes of every still, joined into one silent MP4 from
-    the first of each."""
+    """References from your pictures and a shot plan with a continuity bible from Claude (text only); then the look
+    (set pictures, character sheets and a picture of each view), each shot's stills drawn from it with events painted
+    in, and takes of each shot's picked still, joined into one silent MP4 from the picks."""
     cfg = _state["cfg"]
     _models_or_exit(cfg, film.MODEL_SETS)
     try:
@@ -715,7 +715,7 @@ def film_takes(name: str = typer.Option(..., help="Film name."),
                keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
     """Make takes of every shot's picked still until each has COUNT, then cut the film from the picks."""
     cfg = _state["cfg"]
-    _models_or_exit(cfg, film.MODEL_SETS)
+    _models_or_exit(cfg, bench.VARIANTS[film.VIDEO]["models"])
     try:
         made = film.takes(cfg, name=name, count=count, echo=typer.echo, gpu=lambda: _comfy_session(cfg, keep_up))
     except FILM_ERRORS as error:
@@ -736,6 +736,9 @@ def film_sound(name: str = typer.Option(..., help="Film name."),
     worker = sound.PrismAudio()
     try:
         film.load(cfg, name)
+        if bed is not None and not bed.is_file():
+            typer.echo(f"FAIL  no recording at {bed}")
+            raise typer.Exit(1)
         problems = worker.problems(cfg)
         if problems:
             for problem in problems:
@@ -747,9 +750,6 @@ def film_sound(name: str = typer.Option(..., help="Film name."),
         verdict = run_preflight(cfg.gpu, min_free_gib=SOUND_FREE_GIB)
         if not verdict.ok:
             typer.echo("FAIL  " + "; ".join(verdict.problems))
-            raise typer.Exit(1)
-        if bed is not None and not bed.is_file():
-            typer.echo(f"FAIL  no recording at {bed}")
             raise typer.Exit(1)
         made = film.add_sound(cfg, name=name, worker=worker, echo=typer.echo,
                               seed=None if seed is None else seed - 1, bed_file=bed)

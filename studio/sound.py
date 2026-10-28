@@ -94,9 +94,11 @@ class PrismAudio:
         reply = json.loads(result.stdout.strip().splitlines()[-1])
         return Track(path=dest, elapsed_s=time.monotonic() - started, peak_gib=reply.get("peak_gib"))
 
-    def speech(self, cfg: Config, wav: Path) -> float:
-        """The share of `wav` that Silero VAD hears as speech, 0 to 1. On CPU, a second or two."""
-        result = subprocess.run([str(self.python(cfg)), "-I", str(SPEECH)], input=json.dumps({"wav": str(wav)}),
+    def speech(self, cfg: Config, wav: Path, *, start: float = 0.0, end: float | None = None) -> float:
+        """The share of `wav` between start and end s (the part the film plays) that Silero VAD hears as speech, 0 to
+        1. On CPU, a second or two."""
+        job = {"wav": str(wav), "start": start, "end": end}
+        result = subprocess.run([str(self.python(cfg)), "-I", str(SPEECH)], input=json.dumps(job),
                                 capture_output=True, text=True, timeout=600, env=_env(), cwd=self.home(cfg))
         if result.returncode != 0:
             lines = result.stderr.strip().splitlines()

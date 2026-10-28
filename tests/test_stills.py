@@ -179,7 +179,7 @@ def test_paint_event_masks_the_box_with_a_soft_edge_and_leaves_nothing_in_comfy_
             mask_name = next(n["inputs"]["image"] for n in workflow.values()
                              if n["class_type"] == "LoadImage" and n["inputs"]["image"].endswith("_mask.png"))
             with Image.open(tmp_path / "comfy-io" / "input" / mask_name) as m:
-                seen["mask"] = m.convert("L").copy()
+                seen["mode"], seen["mask"] = m.mode, m.convert("L").copy()
             return super().run(workflow, timeout_s)
 
     monkeypatch.setattr("studio.gpu.runtime.client", lambda c: Painter(tmp_path))
@@ -188,10 +188,21 @@ def test_paint_event_masks_the_box_with_a_soft_edge_and_leaves_nothing_in_comfy_
     dest = tmp_path / "painted.png"
     result = stills.paint_event(cfg, base, [0.70, 0.30, 0.74, 0.36], make_refs(tmp_path, people=0, extras=1),
                                 "A small flash on the horizon.", seed=4, name="x_still1", dest=dest)
-    mask = seen["mask"]
-    assert mask.size == (1920, 1088)
-    assert mask.getpixel((round(0.72 * 1920), round(0.33 * 1088))) == 255  # inside the box
-    assert mask.getpixel((100, 100)) == 0 and mask.getpixel((round(0.72 * 1920), round(0.6 * 1088))) == 0
-    assert 0 < mask.getpixel((round(0.70 * 1920), round(0.33 * 1088))) < 255  # a soft edge
+    mask, mode = seen["mask"], seen["mode"]
+    assert mask.size == (1920, 1088) and mode == "RGB"  # LoadImage reads RGB exactly
+    x0, y0, x1, y1 = round(0.70 * 1920), round(0.30 * 1088), round(0.74 * 1920), round(0.36 * 1088)
+    assert min(mask.getpixel((x, y)) for x in range(x0, x1, 4) for y in range(y0, y1, 4)) >= 240  # the whole box
+    assert mask.getpixel((100, 100)) == 0 and mask.getpixel(((x0 + x1) // 2, y1 + 60)) == 0
+    assert 0 < mask.getpixel((x0 - 6, (y0 + y1) // 2)) < 255  # a soft edge just outside
     assert dest.read_bytes() == b"png" and result.caption == "A small flash on the horizon."
     assert list((tmp_path / "comfy-io" / "input").iterdir()) == []
+
+
+def test_a_large_event_box_keeps_its_soft_edge_close(tmp_path):
+    from PIL import Image
+
+    out = stills.event_mask((1920, 1088), [0.2, 0.2, 0.5, 0.7], tmp_path / "mask.png")
+    with Image.open(out) as m:
+        mask = m.convert("L")
+    x1 = round(0.5 * 1920)
+    assert mask.getpixel((x1 - 2, 500)) >= 240 and mask.getpixel((x1 + 48, 500)) == 0

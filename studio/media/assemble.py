@@ -3,6 +3,7 @@ cut; each shot that has its own sound gets a Foley track made FOLEY_HANDLE secon
 the shot with short fades; tracks are kept from cancelling in mono; the film is brought to TARGET_LUFS as one
 programme, with its true peak under TRUE_PEAK after AAC."""
 
+import math
 import subprocess
 import wave
 from pathlib import Path
@@ -145,11 +146,13 @@ def join_bed(cfg: Config, segments: list[Path], out: Path) -> Path:
 
 
 def bed_from_file(cfg: Config, source: Path, out: Path, *, seconds: float) -> Path:
-    """A recording looped to at least `seconds`, as 16-bit 44.1 kHz stereo."""
-    _check(ffmpeg.run(cfg, "-y", "-v", "error", "-stream_loop", "-1", "-i", str(source), "-t", str(seconds),
-                      "-vn", "-ar", "44100", "-ac", "2", "-c:a", "pcm_s16le", str(out), timeout=600),
-           "reading the bed recording")
-    return out
+    """A recording as a bed of at least `seconds`, 16-bit 44.1 kHz stereo: whole if long enough, otherwise repeated
+    with BED_CROSSFADE crossfades, so a loop has no gap or click."""
+    length = ffmpeg.probe(cfg, source)["duration_s"]
+    if length < 2 * BED_CROSSFADE:
+        raise AssemblyError(f"the bed recording is {length:.1f} s, shorter than {2 * BED_CROSSFADE:g} s")
+    copies = 1 if length >= seconds else math.ceil((seconds - BED_CROSSFADE) / (length - BED_CROSSFADE))
+    return join_bed(cfg, [source] * copies, out)
 
 
 def _layer(cfg: Config, track: Path, start: float, end: float, target: float) -> dict:

@@ -78,10 +78,14 @@ def fix_caption(caption: str, locked: dict[str, str]) -> tuple[str, list[str]]:
 
 
 def _draw(cfg: Config, folder: Path, references: list[Reference], request: str, *, seed: int,
-          size: tuple[int, int], name: str, dest: Path, locked: dict[str, str]) -> dict:
-    """The upsampler's caption checked for the locked phrases and fixed, then the still drawn from it. Returns the
-    still's entry for film.json."""
-    caption, lost = fix_caption(upsample(cfg, references, request, name=name), locked)
+          size: tuple[int, int], name: str, dest: Path, locked: dict[str, str], captions: dict) -> dict:
+    """The upsampler's caption checked for the locked phrases and fixed, then the still drawn from it. The upsampler
+    is deterministic, so `captions` keeps each request's caption for its other candidates. Returns the still's entry
+    for film.json."""
+    key = (request, tuple(str(r.file) for r in references))
+    if key not in captions:
+        captions[key] = fix_caption(upsample(cfg, references, request, name=name), locked)
+    caption, lost = captions[key]
     still = render_still(cfg, references, request, seed=seed, size=size, name=name, dest=dest, caption=caption)
     write_private(dest.with_suffix(".graph.json"), json.dumps(still.graph, indent=1) + "\n")
     provenance.write(cfg, dest, kind="still", models=["flux3-klein"], inputs=[r.file for r in references],
@@ -101,11 +105,14 @@ def _paint(cfg: Config, folder: Path, shot: dict, light: str, base: Path, dest: 
     write_private(dest.with_suffix(".graph.json"), json.dumps(painted.graph, indent=1) + "\n")
     provenance.write(cfg, dest, kind="still", models=["flux3-klein"], inputs=[base, *(r.file for r in chosen)],
                      params={"seed": seed, "box": shot["event_box"]})
-    return {"base": str(base.relative_to(folder)), "box": shot["event_box"]}
+    return {"base": str(base.relative_to(folder)), "box": shot["event_box"], "seed": seed}
 
 
 def _picked(shot: dict) -> int:
-    return next(i for i, still in enumerate(shot["stills"], start=1) if still["file"] == shot["still"])
+    picked = next((i for i, still in enumerate(shot["stills"], start=1) if still["file"] == shot["still"]), None)
+    if picked is None:
+        raise FilmError(f"shot {shot['n']} has no still yet: the film stopped while drawing; make it again")
+    return picked
 
 
 def _clip_size(data: dict) -> tuple[int, int]:
@@ -133,20 +140,32 @@ def _takes(cfg: Config, folder: Path, data: dict, shot: dict, count: int, echo) 
              f"motion {take['triage']['motion']} -> {dest}")
 
 
+SOUND_FIELDS = ("sound", "sound_seed", "sound_s", "speech", "dropped")
+
+
 def _rebuild(cfg: Config, folder: Path, data: dict, echo) -> None:
-    """The silent film from the picks, once every shot has a take of its picked still; any sound is then stale."""
-    waiting = [s for s in data["shots"] if not s.get("clip")]
-    for s in waiting:
-        echo(f"shot {s['n']}: still {_picked(s)} has no takes; run: uv run studio film takes --name {data['name']}")
-    if waiting:
+    """The silent film from the picks, once every shot has a take of its picked still. A cut that changed drops the
+    film's sound, which no longer fits; an unchanged cut keeps it."""
+    cut = [s.get("clip") for s in data["shots"]]
+    if data.get("film") and data.get("cut") == cut:
+        _save(folder, data)
+        return
+    for s in data["shots"]:
+        if not s.get("clip"):
+            echo(f"shot {s['n']}: still {_picked(s)} has no takes; run: uv run studio film takes --name "
+                 f"{data['name']}")
+    if None in cut:
         data["film"] = None
     else:
-        clips = [folder / s["clip"] for s in data["shots"]]
+        clips = [folder / c for c in cut]
         assemble.silent_film(cfg, clips, folder / "film.mp4", seconds=data["seconds"], fps=data["fps"])
         provenance.write(cfg, folder / "film.mp4", kind="film", models=[], inputs=clips,
                          params={"seconds": data["seconds"]})
         data["film"] = "film.mp4"
-    data["sound"] = None
+    data["cut"], data["sound"] = cut, None
+    for s in data["shots"]:
+        for field in SOUND_FIELDS:
+            s.pop(field, None)
     _save(folder, data)
 
 
@@ -205,28 +224,28 @@ def make(cfg: Config, *, name: str, prompt: str, pictures: list[Path], shots: in
     look_dir, stills_dir = private_dir(folder / "look"), private_dir(folder / "stills")
     size = PORTRAIT if portrait else LANDSCAPE
     words = {k: getattr(bible, k) for k in LOCKED}
+    captions: dict = {}
     with gpu():
         for kind, chosen, request, locked in (("set", places, plan.set_request, ("place", "light")),
                                               ("sheet", people, plan.sheet_request, ("wardrobe",))):
             for c in range(1, candidates + 1):
                 seed, dest = secrets.randbelow(2**31), look_dir / f"{kind}{c}.png"
                 entry = _draw(cfg, folder, chosen, request, seed=seed, size=size, name=f"{name}_{kind}{c}",
-                              dest=dest, locked={k: words[k] for k in locked})
+                              dest=dest, locked={k: words[k] for k in locked}, captions=captions)
                 data["look"][kind].append(entry)
                 _save(folder, data)
                 echo(f"look  {kind} {c}/{candidates}  seed {seed}, {entry['s']} s -> {dest}")
         sheet, plate = _look_reference(look_dir / "sheet1.png"), _look_reference(look_dir / "set1.png")
-        views = {}
-        for view in bible.views:
-            slug = clean_name(view.id)
+        views = {}  # files are named by the view's place in the bible: ids need not be file names
+        for v, view in enumerate(bible.views, start=1):
             for c in range(1, candidates + 1):
-                seed, dest = secrets.randbelow(2**31), look_dir / f"view-{slug}{c}.png"
-                entry = _draw(cfg, folder, [plate], view.request, seed=seed, size=size, name=f"{name}_view-{slug}{c}",
-                              dest=dest, locked={k: words[k] for k in ("place", "light")})
+                seed, dest = secrets.randbelow(2**31), look_dir / f"view{v}-{c}.png"
+                entry = _draw(cfg, folder, [plate], view.request, seed=seed, size=size, name=f"{name}_view{v}-{c}",
+                              dest=dest, locked={k: words[k] for k in ("place", "light")}, captions=captions)
                 data["look"]["views"][view.id].append(entry)
                 _save(folder, data)
                 echo(f"look  view {view.id} {c}/{candidates}  seed {seed}, {entry['s']} s -> {dest}")
-            views[view.id] = _look_reference(look_dir / f"view-{slug}1.png")
+            views[view.id] = _look_reference(look_dir / f"view{v}-1.png")
         for shot in data["shots"]:
             n = shot["n"]
             person = shot["still_request"].strip().lower().startswith("create a photograph of the person")
@@ -234,8 +253,10 @@ def make(cfg: Config, *, name: str, prompt: str, pictures: list[Path], shots: in
             for c in range(1, candidates + 1):
                 seed, dest = secrets.randbelow(2**31), stills_dir / f"shot{n}-{c}.png"
                 base = stills_dir / f"shot{n}-{c}-base.png" if shot["event"] else dest
-                entry = _draw(cfg, folder, [*people, sheet, views[shot["view"]]], shot["still_request"], seed=seed,
-                              size=size, name=f"{name}_shot{n}-{c}", dest=base, locked=locked)
+                # A shot without the person is drawn from its view alone: the model copies from every reference.
+                chosen = [*people, sheet, views[shot["view"]]] if person else [views[shot["view"]]]
+                entry = _draw(cfg, folder, chosen, shot["still_request"], seed=seed, size=size,
+                              name=f"{name}_shot{n}-{c}", dest=base, locked=locked, captions=captions)
                 entry["file"] = str(dest.relative_to(folder))
                 if shot["event"]:
                     entry["painted"] = _paint(cfg, folder, shot, bible.light, base, dest, event_refs,
@@ -281,15 +302,23 @@ def takes(cfg: Config, *, name: str, count: int, echo, gpu=contextlib.nullcontex
     return data
 
 
-def _gated(cfg: Config, worker, *, clip: Path, prompt: str, seconds: int, seed: int, dest: Path):
-    """A track made and checked for speech, made once more with another seed when it sounds like speech. Returns the
-    speech share, the seed used, the time taken and whether the track is clean."""
-    for attempt in (0, 1):
-        made = worker.render(cfg, clip=clip, prompt=prompt, seconds=seconds, seed=seed + 1000 * attempt, dest=dest)
-        heard = worker.speech(cfg, dest)
-        if heard < SPEECH_MAX:
-            break
-    return heard, seed + 1000 * attempt, made.elapsed_s, heard < SPEECH_MAX
+def _gated(cfg: Config, worker, *, clip: Path, prompt: str, seconds: int, seed: int, dest: Path,
+           heard_from: float = 0.0, heard_to: float | None = None):
+    """A track made and checked for speech over the part the film plays (`heard_from` to `heard_to` s); when it
+    sounds like speech, made once more with another seed, and the cleaner of the two kept in `dest`. Returns the
+    speech share, the seed and time of the kept track, and whether it is clean."""
+    made = worker.render(cfg, clip=clip, prompt=prompt, seconds=seconds, seed=seed, dest=dest)
+    heard = worker.speech(cfg, dest, start=heard_from, end=heard_to)
+    if heard < SPEECH_MAX:
+        return heard, seed, made.elapsed_s, True
+    again = dest.with_name(f"{dest.stem}-again.wav")
+    remade = worker.render(cfg, clip=clip, prompt=prompt, seconds=seconds, seed=seed + 1000, dest=again)
+    heard_again = worker.speech(cfg, again, start=heard_from, end=heard_to)
+    if heard_again <= heard:
+        again.replace(dest)
+        return heard_again, seed + 1000, remade.elapsed_s, heard_again < SPEECH_MAX
+    again.unlink()
+    return heard, seed, made.elapsed_s, False
 
 
 def _bed_picture(data: dict) -> str:
@@ -317,9 +346,11 @@ def _bed(cfg: Config, folder: Path, data: dict, worker, base: int, sound_dir: Pa
                                            seed=base + 100 + i, dest=dest)
             provenance.write(cfg, dest, kind="sound", models=worker.models, inputs=[picture],
                              params={"seed": used, "seconds": assemble.BED_SEGMENT})
-            segments.append({"file": f"sound/{dest.name}", "seed": used, "speech": heard})
+            segments.append({"file": f"sound/{dest.name}", "seed": used, "speech": heard}
+                            | ({} if clean else {"speech_failed": True}))
             if not clean:
-                echo(f"bed   segment {i + 1}: speech-like twice ({heard:.2f} of the track); kept, the film needs a bed")
+                echo(f"bed   segment {i + 1}: speech-like twice ({heard:.2f} of the track); the cleaner attempt is "
+                     "kept, the film needs a bed")
     bed = assemble.join_bed(cfg, [folder / seg["file"] for seg in segments], sound_dir / "bed.wav")
     echo(f"bed   {count} segments of {assemble.BED_SEGMENT} s from {picture.name}, speech "
          + ", ".join(f"{seg['speech']:.2f}" for seg in segments))
@@ -339,6 +370,9 @@ def add_sound(cfg: Config, *, name: str, worker, echo, seed: int | None = None, 
     base = seed if seed is not None else secrets.randbelow(2**31 - 2000)
     sound_dir = private_dir(folder / "sound")
     seconds, shots = data["seconds"], data["shots"]
+    if not data.get("bible") and not bed_file:
+        raise FilmError(f"film {data['name']} was planned before the continuity bible, so it has no ambience prompt "
+                        "and no Foley marks: give a recording of the place with --bed, or make the film again")
     if bed_file:
         bed = assemble.bed_from_file(cfg, bed_file, sound_dir / "bed.wav", seconds=len(shots) * seconds)
         about = {"bed_file": str(bed_file)}
@@ -357,7 +391,9 @@ def add_sound(cfg: Config, *, name: str, worker, echo, seed: int | None = None, 
                                           handle=assemble.FOLEY_HANDLE)
             heard, used, took, clean = _gated(cfg, worker, clip=padded, prompt=shot["sound_prompt"],
                                               seconds=seconds + int(2 * assemble.FOLEY_HANDLE), seed=base + n,
-                                              dest=dest)
+                                              dest=dest,
+                                              heard_from=round(assemble.FOLEY_HANDLE - assemble.FOLEY_IN, 3),
+                                              heard_to=round(assemble.FOLEY_HANDLE + seconds + assemble.FOLEY_OUT, 3))
             padded.unlink()
             shot.update(sound_seed=used, sound_s=round(took, 1), speech=heard)
             if clean:
@@ -367,12 +403,14 @@ def add_sound(cfg: Config, *, name: str, worker, echo, seed: int | None = None, 
                 echo(f"foley shot {n}: seed {used}, speech {heard:.2f}, {took:.1f} s -> {dest}")
             else:
                 shot["dropped"] = "speech"
+                dest.unlink()
                 echo(f"foley shot {n}: speech-like twice ({heard:.2f} of the track); dropped, the bed carries the "
                      "shot")
             _save(folder, data)
     out = folder / "film-sound.mp4"
     mix = assemble.with_layers(cfg, folder / data["film"], bed, tracks, out, shots=len(shots), seconds=seconds)
     data["sound"] = {"film": out.name, **about, **mix}
+    data["cut"] = [s.get("clip") for s in shots]
     _save(folder, data)
     for n, s in enumerate(mix["shots"], start=1):
         echo(f"mix   shot {n}: {s['lufs']:.1f} LUFS in the film, "

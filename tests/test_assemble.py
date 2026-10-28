@@ -176,6 +176,21 @@ def test_with_layers_levels_the_film_as_one_programme_and_keeps_stereo_safe(tmp_
     assert report["shots"][0]["correlation_after"] > 0 > report["shots"][0]["correlation_before"]
 
 
+@needs_ffmpeg
+def test_a_short_recording_is_looped_with_crossfades_into_a_bed_as_long_as_the_film(tmp_path):
+    # Noise, like a real room: a loop joins the recording's end to its start, which do not repeat each other.
+    noise = np.random.default_rng(2).standard_normal((3 * 44100, 2)) * 0.05
+    recording = write_wav(tmp_path / "rec.wav", noise)
+    bed = assemble.bed_from_file(CFG, recording, tmp_path / "bed.wav", seconds=15)
+    assert ffmpeg.probe(CFG, bed)["duration_s"] >= 15
+    pcm = decoded(bed)
+    rms = [20 * np.log10(np.sqrt((pcm[int(t * 48000):int((t + 0.2) * 48000)] ** 2).mean()))
+           for t in np.arange(0.2, 14.6, 0.1)]
+    assert max(rms) - min(rms) < 1.5  # no gap or dip where the loop joins
+    with pytest.raises(assemble.AssemblyError, match="shorter than 2 s"):
+        assemble.bed_from_file(CFG, tone(tmp_path / "short.wav", 1.5, 300, -20), tmp_path / "b.wav", seconds=15)
+
+
 def test_under_peak_encodes_once_more_with_the_gain_lowered_by_the_excess(tmp_path, monkeypatch):
     gains, measured = [], [(-15.9, -1.2), (-16.2, -1.7)]
     monkeypatch.setattr("studio.media.assemble.measure", lambda cfg, *args, **kw: measured.pop(0))

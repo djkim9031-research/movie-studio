@@ -108,9 +108,9 @@ def test_speech_runs_the_detector_offline_in_the_worker_python(cfg, tmp_path, mo
         return SimpleNamespace(returncode=0, stdout='{"speech": 0.42}\n', stderr="")
 
     monkeypatch.setattr("studio.sound.subprocess.run", run)
-    assert worker.speech(cfg, tmp_path / "shot2.wav") == 0.42
+    assert worker.speech(cfg, tmp_path / "shot2.wav", start=1.4, end=6.8) == 0.42
     assert seen["args"] == [str(worker.python(cfg)), "-I", str(sound.SPEECH)]
-    assert json.loads(seen["input"]) == {"wav": str(tmp_path / "shot2.wav")}
+    assert json.loads(seen["input"]) == {"wav": str(tmp_path / "shot2.wav"), "start": 1.4, "end": 6.8}
     assert seen["env"]["HF_HUB_OFFLINE"] == "1" and "HF_TOKEN" not in seen["env"]
 
 

@@ -128,13 +128,15 @@ def paint_graph(base: str, mask: str, files: list[str], caption: str, *, seed: i
 
 
 def event_mask(size: tuple[int, int], box: list[float], out: Path) -> Path:
-    """White over `box` ([left, top, right, bottom] fractions) grown by a soft margin, black elsewhere."""
+    """White over all of `box` ([left, top, right, bottom] fractions), fading to black within about two soft widths
+    outside it (a tenth of the box's short side, 3 to 16 px), so an event blends without reaching far. Saved as RGB,
+    which LoadImage reads exactly."""
     w, h = size
     x0, y0, x1, y1 = (round(f * n) for f, n in zip(box, (w, h, w, h)))
-    soft = max(3, round(0.12 * min(x1 - x0, y1 - y0)))
+    soft = min(16, max(3, round(0.1 * min(x1 - x0, y1 - y0))))
     mask = Image.new("L", size, 0)
     ImageDraw.Draw(mask).rectangle((x0 - soft, y0 - soft, x1 + soft, y1 + soft), fill=255)
-    mask.filter(ImageFilter.GaussianBlur(soft)).save(out)
+    mask.filter(ImageFilter.GaussianBlur(soft / 2)).convert("RGB").save(out)
     return out
 
 

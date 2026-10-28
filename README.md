@@ -215,8 +215,8 @@ The film is silent: Wan 2.2 makes no sound. The shot plan already holds a sound 
 `~/studio-data/projects/films/NAME/`:
 
 - `refs/`: the references as used
-- `look/setN.png`, `look/sheetN.png` and `look/view-ID-N.png`: the set picture, character sheet and view picture
-  candidates; the stills are drawn from the first of each
+- `look/setN.png`, `look/sheetN.png` and `look/viewV-N.png`: the set picture, character sheet and view picture
+  candidates (V is the view's place in the bible); the stills are drawn from the first of each
 - `stills/shotN-C.png` and `stills/shotN-C.graph.json`: candidate C of shot N's still and the ComfyUI graph that
   drew it; for a shot with an event, `stills/shotN-C-base.png` is the still before the event was painted in
 - `clips/shotN-C-T.mp4`: take T of still C, silent; the film uses the picks in `film.json`

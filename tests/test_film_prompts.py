@@ -96,6 +96,7 @@ def test_the_references_are_numbered_for_the_set_the_sheet_the_views_and_the_sho
     assert "Character sheet: images 1-6: six photos of the same person (square face crops)." in text
     assert "Each view: image 1: the set picture." in text
     assert "Each shot: images 1-6: the person's photos; image 7: the character sheet; image 8: the shot's view." in text
+    assert "A shot without the person: image 1: the shot's view." in text
     assert "Event pictures: none." in text
     assert "crowd" not in text  # a picture of other people is not used
 

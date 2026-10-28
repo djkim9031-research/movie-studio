@@ -139,7 +139,8 @@ One paragraph, 80 to 160 words.
 Still request:
 - Open with "Create a photograph of the person shown in images 1-N (all N show the same person), dressed exactly as \
 in the character sheet in image S, in the place shown in image V", with the numbers given for the shots (V is the \
-shot's view). A shot without the person opens with "Create a photograph of the place shown in image V".
+shot's view). A shot without the person is drawn from its view alone, so it opens with "Create a photograph of \
+the place shown in image 1".
 - Keep the place exactly as in image V and say only what this moment changes: where the camera stands within the \
 view, the light, the person.
 - Ask to keep the person's exact face, identity, skin tone and hair.
@@ -223,6 +224,7 @@ def look_roles(report: Report, events: frozenset[str] | set[str] = frozenset()) 
     return (f"References, numbered as the image model receives them.\nSet picture: {named}.\n"
             f"Character sheet: {photos}.\nEach view: image 1: the set picture.\n"
             f"Each shot: {mine}; image {people + 1}: the character sheet; image {people + 2}: the shot's view.\n"
+            "A shot without the person: image 1: the shot's view.\n"
             f"Event pictures: {event}.")
 
 
