@@ -32,7 +32,8 @@ FPS = 16  # Wan 2.2's frame rate
 MODEL_SETS = ["face-detect", "face-id", "flux3-klein", *bench.VARIANTS[VIDEO]["models"]]
 ALL_REFERENCES = 30  # pictures a film may use in all; each still takes at most MAX_REFERENCES of them
 LOCKED = {"wardrobe": "Clothes", "place": "Place", "light": "Light"}
-SPEECH_MAX = 0.1  # share of a generated track heard as speech above which it is made again, then dropped
+SPEECH_MAX = 0.02  # share of a track inside speech segments (Silero finds 250 ms or more) above which it is made
+# again, then dropped: any segment fails a heard part of up to 12.5 s. Of 20 generated tracks one had speech (0.10).
 PAINT_TRIES = 3  # seeds tried for an event before its still is kept without it
 FAR_EVENT = 0.10  # an event at most this wide (a fraction of the frame) is told to stay small and far away
 PLACES = ("at the far left of the frame", "left of the frame's centre", "in the centre of the frame",

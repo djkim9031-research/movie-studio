@@ -386,6 +386,14 @@ def test_a_track_that_sounds_like_speech_is_made_again_then_dropped(cfg, tmp_pat
     assert any("shot 3: speech-like twice (0.40 of the track); dropped, the bed carries the shot" in l for l in said)
 
 
+def test_one_short_speech_segment_is_enough_to_make_a_track_again(cfg, tmp_path, renders, sound_steps):
+    make(cfg, tmp_path, FakeClaude(plan(3)), candidates=1, takes=1)
+    worker = FakeWorker(speech={"shot2.wav": [0.05], "shot2-again.wav": [0.0]})  # 0.25 s of a 5 s shot
+    data = film.add_sound(cfg, name="ride", worker=worker, echo=print, seed=40)
+    assert "shot2-again.wav" in [c[4] for c in worker.calls]
+    assert (data["shots"][1]["sound_seed"], data["shots"][1]["speech"]) == (1042, 0.0)
+
+
 def test_a_bed_segment_that_fails_twice_keeps_its_cleaner_attempt_and_says_so(cfg, tmp_path, renders, sound_steps):
     make(cfg, tmp_path, FakeClaude(plan(3)), candidates=1, takes=1)
     worker = FakeWorker(speech={"bed1.wav": [0.12], "bed1-again.wav": [0.80]})

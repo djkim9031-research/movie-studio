@@ -178,6 +178,9 @@ carry the rest. The user approved its first five requirements.
 - Sound in layers: one bed under the whole film, Foley only for shots with their own sound (8 s windows), a speech
   check on every generated track (made again once, then dropped), and one loudness for the whole film instead of
   one per shot, which had pushed quiet shots into the limiter (1.4 to 3.2 LU low).
+- The speech check fails a track on any speech segment Silero finds (250 ms or more). On the 20 tracks of the
+  2026-10-27/28 films it found speech in one (meteor-v2 shot 3, 0.10 of the heard part, frames at 1.00) and nothing
+  in the others, including mixcheck3, whose sound was heard as gibberish: that sound is not speech to the detector.
 - PrismAudio's model card, unchanged since 2026-05-31, says MIT but limits the code, weights and data to research and
   educational use; commercial use needs the authors' permission. Our earlier notes said only MIT. A personal film
   fits; anything shared further needs another sound model or the authors' word.
