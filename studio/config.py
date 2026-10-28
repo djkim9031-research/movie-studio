@@ -37,6 +37,7 @@ class ClaudeConfig(BaseModel):
 class GpuConfig(BaseModel):
     agent_service: str = "agent-vllm"
     min_free_gib: float = 60.0
+    display_processes: list[str] = ["/usr/NX/bin/nxnode.bin"]
 
 
 class DiskConfig(BaseModel):

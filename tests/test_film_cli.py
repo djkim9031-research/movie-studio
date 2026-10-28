@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from studio.cli import app
 from studio.config import REPO_CONFIG
+from studio.gpu import preflight
 from studio.gpu.preflight import Verdict
 from studio.stills import Still
 from tests.test_film_prompts import FakeClaude, plan
@@ -79,3 +80,44 @@ def test_film_sound_reports_an_unknown_film(setup):
     cfg_file, _, _ = setup
     result = CliRunner().invoke(app, ["--config", str(cfg_file), "film", "sound", "--name", "nope"])
     assert result.exit_code == 1 and "FAIL  no film nope" in result.output
+
+
+BUSY = "pid 4242 (python3) holds 9000 MiB on the GPU"
+
+
+def nomachine_on_the_gpu(monkeypatch):
+    """The real preflight, with nvidia-smi showing only NoMachine's screen encoder."""
+    smi = {"--query-compute-apps=pid,process_name,used_memory": "26315, /usr/NX/bin/nxnode.bin, 406\n",
+           "--query-gpu=memory.total,memory.used": "73415, 1705\n"}
+    monkeypatch.setattr("studio.cli.run_preflight", preflight.run_preflight)
+    monkeypatch.setattr("studio.gpu.preflight._nvidia_smi", lambda query, fmt: smi[query])
+    monkeypatch.setattr("studio.gpu.preflight.service_is_active", lambda name: False)
+
+
+def test_film_make_reports_a_busy_gpu_in_one_line(setup, monkeypatch):
+    cfg_file, pictures, _ = setup
+    monkeypatch.setattr("studio.gpu.runtime.is_running", lambda: False)
+    monkeypatch.setattr("studio.gpu.runtime.run_preflight", lambda gpu: Verdict(ok=False, problems=[BUSY]))
+    result = make(cfg_file, pictures)
+    assert result.exit_code == 1 and isinstance(result.exception, SystemExit)
+    assert f"FAIL  GPU not free: {BUSY}" in result.output
+
+
+def test_film_make_runs_beside_nomachines_screen_encoder(setup, monkeypatch):
+    cfg_file, pictures, _ = setup
+    nomachine_on_the_gpu(monkeypatch)
+    result = make(cfg_file, pictures)
+    assert result.exit_code == 0, result.output
+
+
+def test_film_sound_runs_beside_nomachines_screen_encoder(setup, monkeypatch):
+    cfg_file, pictures, films = setup
+    assert make(cfg_file, pictures).exit_code == 0
+    nomachine_on_the_gpu(monkeypatch)
+    monkeypatch.setattr("studio.gpu.runtime.is_running", lambda: False)
+    monkeypatch.setattr("studio.cli.sound.PrismAudio", lambda: SimpleNamespace(problems=lambda cfg: []))
+    monkeypatch.setattr("studio.cli.film.add_sound",
+                        lambda cfg, name, **kw: {"name": name, "sound": {"film": "film-sound.mp4"}})
+    result = CliRunner().invoke(app, ["--config", str(cfg_file), "film", "sound", "--name", "ride"])
+    assert result.exit_code == 0, result.output
+    assert f"PASS  {films / 'ride' / 'film-sound.mp4'}" in result.output

@@ -132,3 +132,18 @@ def test_render_test_reports_the_clip_and_the_absolute_gpu_memory_peak(tmp_path,
     assert result.exit_code == 0, result.output
     assert "PASS  10.00 s 1280x720 24 fps, audio aac" in result.output
     assert "GPU memory peak 42.0 GiB on the card" in result.output
+
+
+def test_gpu_up_and_make_video_report_a_busy_gpu_in_one_line(tmp_path, monkeypatch):
+    from studio.gpu.preflight import Verdict
+
+    busy = "pid 4242 (python3) holds 9000 MiB on the GPU"
+    cfg_file = tmp_path / "studio.yaml"
+    cfg_file.write_text(f"data_root: {tmp_path}\n")
+    (tmp_path / "start.png").write_bytes(b"png")
+    monkeypatch.setattr("studio.gpu.runtime.is_running", lambda: False)
+    monkeypatch.setattr("studio.gpu.runtime.run_preflight", lambda gpu: Verdict(ok=False, problems=[busy]))
+    for args in (["gpu", "up"], ["make-video", str(tmp_path / "start.png"), "--prompt", "She smiles."]):
+        result = CliRunner().invoke(app, ["--config", str(cfg_file), *args])
+        assert result.exit_code == 1 and isinstance(result.exception, SystemExit), args
+        assert f"FAIL  GPU not free: {busy}" in result.output

@@ -152,3 +152,15 @@ def test_cast_ingest_reports_kept_images_and_missing_angles(tmp_path, monkeypatc
     result = run(cfg_file, "cast", "ingest", "--person", "me")
     assert result.exit_code == 0, result.output
     assert "PASS  4 images in" in result.output and "missing angles: slightly turned" in result.output
+
+
+def test_bench_identity_reports_a_busy_gpu_in_one_line(tmp_path, monkeypatch):
+    from studio.gpu.preflight import Verdict
+
+    cfg_file, _ = setup(tmp_path, monkeypatch)
+    busy = "pid 4242 (python3) holds 9000 MiB on the GPU"
+    monkeypatch.setattr("studio.gpu.runtime.is_running", lambda: False)
+    monkeypatch.setattr("studio.gpu.runtime.run_preflight", lambda gpu: Verdict(ok=False, problems=[busy]))
+    result = CliRunner().invoke(app, ["--config", str(cfg_file), "bench", "identity", "--person", "me"])
+    assert result.exit_code == 1
+    assert [line for line in result.output.splitlines() if line.startswith("FAIL")] == [f"FAIL  GPU not free: {busy}"]

@@ -49,8 +49,10 @@ def check_driver(version: str, minimum: int = MIN_DRIVER) -> Check:
 def check_gpu(cfg: Config) -> list[Check]:
     driver = subprocess.run(["nvidia-smi", "--query-gpu=driver_version", "--format=csv,noheader"],
                             capture_output=True, text=True, check=True, timeout=30).stdout.strip().splitlines()[0]
-    verdict = run_preflight(cfg.gpu.agent_service, cfg.gpu.min_free_gib)
-    detail = "; ".join(verdict.problems) or f"no compute processes, {verdict.memory.free_gib:.1f} GiB free"
+    verdict = run_preflight(cfg.gpu)
+    display = ", ".join(f"pid {p.pid} {p.name}, {p.held}" for p in verdict.display)
+    idle = f"no compute processes but the display's ({display})" if display else "no compute processes"
+    detail = "; ".join(verdict.problems) or f"{idle}, {verdict.memory.free_gib:.1f} GiB free"
     return [check_driver(driver), Check("gpu idle", verdict.ok, detail)]
 
 

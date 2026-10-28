@@ -9,8 +9,9 @@ import pytest
 from studio.claude.client import Claude
 from studio.claude.ledger import Ledger
 from studio.config import Config, load_config
-from studio.doctor import (Check, check_claude_cache, check_disk, check_driver, check_ffmpeg, check_private,
-                           exit_code, guarded)
+from studio.doctor import (Check, check_claude_cache, check_disk, check_driver, check_ffmpeg, check_gpu,
+                           check_private, exit_code, guarded)
+from studio.gpu.preflight import GpuMemory, GpuProcess, Verdict
 from studio.media import ffmpeg
 
 
@@ -98,3 +99,13 @@ def test_nvenc_test_encodes_are_skipped_while_the_gpu_is_busy(monkeypatch):
     encodes = [c for c in check_ffmpeg(load_config(), gpu_free=False) if c.name.startswith("encode ")]
     assert len(encodes) == 3
     assert all(not c.ok and c.detail == "skipped: GPU busy" for c in encodes)
+
+
+def test_the_gpu_check_names_the_display_processes_it_let_through(monkeypatch):
+    driver = subprocess.CompletedProcess([], 0, stdout="580.126.09\n")
+    monkeypatch.setattr("studio.doctor.subprocess.run", lambda *a, **k: driver)
+    monkeypatch.setattr("studio.doctor.run_preflight", lambda gpu: Verdict(
+        ok=True, memory=GpuMemory(73415, 1705), display=[GpuProcess(26315, "/usr/NX/bin/nxnode.bin", 406)]))
+    assert check_gpu(load_config())[1] == Check(
+        "gpu idle", True, "no compute processes but the display's (pid 26315 /usr/NX/bin/nxnode.bin, 406 MiB), "
+                          "70.0 GiB free")

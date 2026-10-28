@@ -2,7 +2,11 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 from studio.config import Config, load_config
+from studio.gpu import runtime
+from studio.gpu.preflight import Verdict
 from studio.gpu.runtime import (egress_problems, network_create_args, network_problems, parse_top_pids,
                                 run_args)
 from studio.gpu.vram import VramSampler
@@ -89,3 +93,14 @@ def test_the_lock_pins_every_package_with_hashes_and_the_configured_torch():
     pins = [pin for pin in pins if not pin.startswith("#")]
     assert len(pins) > 50 and all(re.match(r"^[A-Za-z0-9._-]+==\S+ ", pin) and "--hash=sha256:" in pin for pin in pins)
     assert any(pin.startswith(f"torch=={load_config().comfyui.torch}+cu130 ") for pin in pins)
+
+
+def test_up_refuses_a_busy_gpu_before_any_docker_call(tmp_path, monkeypatch):
+    cfg, seen = make_config(tmp_path), []
+    monkeypatch.setattr("studio.gpu.runtime.is_running", lambda: False)
+    monkeypatch.setattr("studio.gpu.runtime.run_preflight", lambda gpu: seen.append(gpu) or Verdict(
+        ok=False, problems=["pid 4242 (python3) holds 9000 MiB on the GPU"]))
+    monkeypatch.setattr("studio.gpu.runtime._docker", lambda *a, **k: pytest.fail("docker ran on a busy GPU"))
+    with pytest.raises(runtime.GpuBusy, match=r"GPU not free: pid 4242 \(python3\) holds 9000 MiB on the GPU"):
+        runtime.up(cfg)
+    assert seen == [cfg.gpu]

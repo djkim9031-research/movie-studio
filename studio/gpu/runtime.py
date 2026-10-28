@@ -38,6 +38,10 @@ print(json.dumps({"1.1.1.1:443": tcp("1.1.1.1", 443), "8.8.8.8:53": tcp("8.8.8.8
 """
 
 
+class GpuBusy(RuntimeError):
+    pass
+
+
 def image_tag(cfg: Config, docker_dir: Path = DOCKER_DIR) -> str:
     """Changes whenever a build input changes, so an image built from older pins is never run under newer ones."""
     c = cfg.comfyui
@@ -141,9 +145,9 @@ def up(cfg: Config, ready_timeout_s: float = 180) -> None:
     if is_running():
         client(cfg).wait_ready(ready_timeout_s)
         return
-    verdict = run_preflight(cfg.gpu.agent_service, cfg.gpu.min_free_gib)
+    verdict = run_preflight(cfg.gpu)
     if not verdict.ok:
-        raise RuntimeError("GPU not free: " + "; ".join(verdict.problems))
+        raise GpuBusy("GPU not free: " + "; ".join(verdict.problems))
     for name in IO_SUBDIRS:
         private_dir(cfg.comfy_io_dir / name)
     ensure_network(cfg)

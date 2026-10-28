@@ -135,7 +135,7 @@ def gpu_build():
 def gpu_up():
     """Check the GPU is free, start the container and wait until ComfyUI answers."""
     cfg = _state["cfg"]
-    runtime.up(cfg)
+    _up_or_exit(cfg)
     typer.echo(f"ComfyUI is up at {cfg.comfyui.base_url}")
 
 
@@ -169,8 +169,16 @@ def _report_clip(result) -> None:
     typer.echo(f"      {result.clip}")
 
 
+def _up_or_exit(cfg: Config) -> None:
+    try:
+        runtime.up(cfg)
+    except runtime.GpuBusy as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+
+
 def _gpu_ours_or_exit(cfg: Config) -> None:
-    verdict = run_preflight(cfg.gpu.agent_service, min_free_gib=0, own_pids=runtime.container_pids())
+    verdict = run_preflight(cfg.gpu, min_free_gib=0, own_pids=runtime.container_pids())
     if not verdict.ok:
         typer.echo("FAIL  " + "; ".join(verdict.problems))
         raise typer.Exit(1)
@@ -216,7 +224,7 @@ def make_video(picture: Path = typer.Argument(..., help="Start frame: any photo 
     name = re.sub(r"[^A-Za-z0-9_-]+", "-", name or picture.stem).strip("-") or "clip"
     started_here = not runtime.is_running()
     if started_here:
-        runtime.up(cfg)
+        _up_or_exit(cfg)
     try:
         _gpu_ours_or_exit(cfg)
         size = target_size(*image_size(cfg, picture))
@@ -239,7 +247,7 @@ def make_video(picture: Path = typer.Argument(..., help="Start frame: any photo 
 
 
 SCENE_ERRORS = (scene.SceneError, PromptError, RenderError, WorkflowError, TimeoutError, Refused, CredentialsError,
-                BudgetExceeded, anthropic.APIError, ValidationError)
+                BudgetExceeded, anthropic.APIError, ValidationError, runtime.GpuBusy)
 
 
 def face_tools(cfg: Config) -> refs.FaceTools:
@@ -678,7 +686,7 @@ def film_sound(name: str = typer.Option(..., help="Film name."),
         # The worker needs the GPU: our ComfyUI goes down first, and nothing else may hold it.
         if runtime.is_running():
             runtime.down(cfg)
-        verdict = run_preflight(cfg.gpu.agent_service, min_free_gib=SOUND_FREE_GIB)
+        verdict = run_preflight(cfg.gpu, min_free_gib=SOUND_FREE_GIB)
         if not verdict.ok:
             typer.echo("FAIL  " + "; ".join(verdict.problems))
             raise typer.Exit(1)

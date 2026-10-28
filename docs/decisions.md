@@ -111,3 +111,11 @@
 - No music for now.
 - T5Gemma access was granted on 2026-10-27; the set is pinned at ddd0c8a6. On this card a 5 s shot takes about
   50 s (VideoPrism's JAX compile is most of it) and 13 GB of GPU memory at peak.
+
+## 2026-10-27: GPU sharing
+
+- GPU work starts only when agent-vllm is stopped and no other compute process holds the GPU. The display's own
+  programs do not count: Xorg and gnome-shell are graphics processes, and NoMachine's screen encoder opens a CUDA
+  context for NVENC while a client is connected, so `gpu.display_processes` names it. Its memory counts against the
+  free-memory floor like the display's.
+- A busy GPU stops a command with one FAIL line that names each process.

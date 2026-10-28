@@ -17,6 +17,8 @@ claude:
 gpu:
   agent_service: agent-vllm
   min_free_gib: 60
+  # Display programs that open a CUDA context: NoMachine's screen encoder (NVENC) while a client is connected.
+  display_processes: [/usr/NX/bin/nxnode.bin]
 
 disk:
   home_min_free_gb: 300
