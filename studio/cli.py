@@ -654,7 +654,8 @@ def film_make(pictures: list[Path] = typer.Argument(..., help="A folder of pictu
               candidates: int = typer.Option(3, min=1, max=6, help="Candidates of the set picture, the character "
                                                                    "sheet and each shot's still; the film uses the "
                                                                    "first of each."),
-              takes: int = typer.Option(2, min=1, max=4, help="Clips made from each still; the film uses the first."),
+              takes: int = typer.Option(4, min=1, max=8, help="Clips made from each shot's picked still (the first "
+                                                              "until you pick); the film uses the first."),
               events: list[Path] = typer.Option(None, "--event", help="A picture of what happens (for example a "
                                                                       "real blast over the sea): it goes to the "
                                                                       "shots whose still names it, never to the set. "
@@ -677,6 +678,50 @@ def film_make(pictures: list[Path] = typer.Argument(..., help="A folder of pictu
     typer.echo(f'PASS  "{made["title"]}", {len(made["shots"])} shots; film: {folder / made["film"]}')
     typer.echo(f"      review: {folder / 'review.html'}")
     typer.echo(f"      sound: uv run studio film sound --name {made['name']} (once the sound worker is set up)")
+
+
+def _choice(text: str) -> tuple[int, tuple[int, int | None]]:
+    """SHOT=STILL or SHOT=STILL.TAKE"""
+    shot, _, rest = text.partition("=")
+    still, _, take = rest.partition(".")
+    if not (shot.isdigit() and still.isdigit() and (take.isdigit() or not take)):
+        raise ValueError(f"{text}: use SHOT=STILL or SHOT=STILL.TAKE, for example 2=3 or 2=3.1")
+    return int(shot), (int(still), int(take) if take else None)
+
+
+def _report_cut(data: dict, cfg) -> None:
+    if data["film"]:
+        typer.echo(f"PASS  {film.film_dir(cfg, data['name']) / data['film']}")
+        typer.echo(f"      sound: uv run studio film sound --name {data['name']}")
+
+
+@film_app.command("pick")
+def film_pick(choices: list[str] = typer.Argument(..., help="SHOT=STILL or SHOT=STILL.TAKE, for example 2=3 or 2=3.1; "
+                                                            "a still without a take uses its first take."),
+              name: str = typer.Option(..., help="Film name.")):
+    """Choose which still and take each shot uses, then cut the film again from the picks."""
+    cfg = _state["cfg"]
+    try:
+        made = film.pick(cfg, name=name, choices=dict(_choice(c) for c in choices), echo=typer.echo)
+    except (ValueError, *FILM_ERRORS) as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    _report_cut(made, cfg)
+
+
+@film_app.command("takes")
+def film_takes(name: str = typer.Option(..., help="Film name."),
+               count: int = typer.Option(4, min=1, max=8, help="Takes each shot's picked still should have."),
+               keep_up: bool = typer.Option(False, "--keep-up", help="Leave ComfyUI running afterwards.")):
+    """Make takes of every shot's picked still until each has COUNT, then cut the film from the picks."""
+    cfg = _state["cfg"]
+    _models_or_exit(cfg, film.MODEL_SETS)
+    try:
+        made = film.takes(cfg, name=name, count=count, echo=typer.echo, gpu=lambda: _comfy_session(cfg, keep_up))
+    except FILM_ERRORS as error:
+        typer.echo(f"FAIL  {error}")
+        raise typer.Exit(1)
+    _report_cut(made, cfg)
 
 
 @film_app.command("sound")

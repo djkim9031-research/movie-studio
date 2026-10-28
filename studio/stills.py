@@ -3,9 +3,12 @@
 model draws in 16 steps. Reference copies and results are removed from ComfyUI's folders after each still."""
 
 import math
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFilter
 
 from studio.config import Config
 from studio.fs import copy_into, copy_out, private_dir, remove_in, safe_parts
@@ -61,13 +64,10 @@ def upsample_graph(squares: list[str], request: str) -> dict:
     return g
 
 
-def graph(files: list[str], squares: list[str], request: str, *, seed: int, size: tuple[int, int],
-          prefix: str, caption: str | None = None) -> dict:
-    """`files` go to the model at their own aspect; `squares` (same order) to the upsampler's image batch. With a
-    `caption` the model draws from it directly and the upsampler is left out."""
-    if not 1 <= len(files) <= MAX_REFERENCES or len(squares) != len(files):
-        raise ValueError(f"FLUX 3 Klein takes 1 to {MAX_REFERENCES} references, got {len(files)}")
-    g = {
+def _model(text, seed: int, latent: list, prefix: str, image: list | None = None) -> dict:
+    """The distilled model drawing `text` (a string, or the upsampler's output) into `latent` in 16 steps; the saved
+    image is the decode, or `image` when given."""
+    return {
         "40": {"class_type": "UNETLoader", "inputs": {"unet_name": "flux3-image-klein-bf16.safetensors",
                                                        "weight_dtype": "default"}},
         "41": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_4b_bf16.safetensors", "type": "flux3",
@@ -76,24 +76,66 @@ def graph(files: list[str], squares: list[str], request: str, *, seed: int, size
         "43": {"class_type": "ModelSamplingFlux", "inputs": {"model": ["40", 0], "max_shift": math.log(16),
                                                               "base_shift": math.log(16), "width": 1024,
                                                               "height": 1024}},
-        "44": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["41", 0],
-                                                          "text": caption if caption is not None else ["33", 0]}},
+        "44": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["41", 0], "text": text}},
         "45": {"class_type": "CLIPTextEncode", "inputs": {"clip": ["41", 0], "text": ""}},
-        "47": {"class_type": "EmptyFlux2LatentImage", "inputs": {"width": size[0], "height": size[1],
-                                                                  "batch_size": 1}},
         "48": {"class_type": "KSampler", "inputs": {"model": ["43", 0], "positive": ["46", 0], "negative": ["46", 1],
-                                                    "latent_image": ["47", 0], "seed": seed, "steps": 16, "cfg": 1.0,
+                                                    "latent_image": latent, "seed": seed, "steps": 16, "cfg": 1.0,
                                                     "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
         "49": {"class_type": "VAEDecode", "inputs": {"samples": ["48", 0], "vae": ["42", 0]}},
-        SAVE_NODE: {"class_type": "SaveImage", "inputs": {"images": ["49", 0], "filename_prefix": prefix}},
+        SAVE_NODE: {"class_type": "SaveImage", "inputs": {"images": image or ["49", 0], "filename_prefix": prefix}},
     }
+
+
+def _references(load: "_Loads", names: list[str]) -> dict:
+    return {"class_type": "ReferenceMultiLatent", "inputs": {
+        "positive": ["44", 0], "negative": ["45", 0], "vae": ["42", 0], "resolution": "resize",
+        "resolution.megapixels": 1.0, **{f"images.image{i}": [load(name), 0] for i, name in enumerate(names)}}}
+
+
+def graph(files: list[str], squares: list[str], request: str, *, seed: int, size: tuple[int, int],
+          prefix: str, caption: str | None = None) -> dict:
+    """`files` go to the model at their own aspect; `squares` (same order) to the upsampler's image batch. With a
+    `caption` the model draws from it directly and the upsampler is left out."""
+    if not 1 <= len(files) <= MAX_REFERENCES or len(squares) != len(files):
+        raise ValueError(f"FLUX 3 Klein takes 1 to {MAX_REFERENCES} references, got {len(files)}")
+    g = _model(caption if caption is not None else ["33", 0], seed, ["47", 0], prefix)
+    g["47"] = {"class_type": "EmptyFlux2LatentImage", "inputs": {"width": size[0], "height": size[1],
+                                                                  "batch_size": 1}}
     load = _Loads(g)
     if caption is None:
         g.update(_upsampler(request, {f"images.image{i}": [load(name), 0] for i, name in enumerate(squares)}))
-    g["46"] = {"class_type": "ReferenceMultiLatent", "inputs": {
-        "positive": ["44", 0], "negative": ["45", 0], "vae": ["42", 0], "resolution": "resize",
-        "resolution.megapixels": 1.0, **{f"images.image{i}": [load(name), 0] for i, name in enumerate(files)}}}
+    g["46"] = _references(load, files)
     return g
+
+
+def paint_graph(base: str, mask: str, files: list[str], caption: str, *, seed: int, prefix: str) -> dict:
+    """`base` kept outside `mask` (white where the event goes); inside it the model draws `caption` with the base and
+    `files` as references, and the drawing is pasted back into the base through the mask, so nothing outside it
+    changes."""
+    if not len(files) + 1 <= MAX_REFERENCES:
+        raise ValueError(f"FLUX 3 Klein takes up to {MAX_REFERENCES} references, got {len(files) + 1}")
+    g = _model(caption, seed, ["72", 0], prefix, image=["73", 0])
+    load = _Loads(g)
+    pixels, region = load(base), load(mask)
+    g["70"] = {"class_type": "ImageToMask", "inputs": {"image": [region, 0], "channel": "red"}}
+    g["71"] = {"class_type": "VAEEncode", "inputs": {"pixels": [pixels, 0], "vae": ["42", 0]}}
+    g["72"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["71", 0], "mask": ["70", 0]}}
+    g["46"] = _references(load, [base, *files])
+    g["73"] = {"class_type": "ImageCompositeMasked", "inputs": {"destination": [pixels, 0], "source": ["49", 0],
+                                                                "x": 0, "y": 0, "resize_source": False,
+                                                                "mask": ["70", 0]}}
+    return g
+
+
+def event_mask(size: tuple[int, int], box: list[float], out: Path) -> Path:
+    """White over `box` ([left, top, right, bottom] fractions) grown by a soft margin, black elsewhere."""
+    w, h = size
+    x0, y0, x1, y1 = (round(f * n) for f, n in zip(box, (w, h, w, h)))
+    soft = max(3, round(0.12 * min(x1 - x0, y1 - y0)))
+    mask = Image.new("L", size, 0)
+    ImageDraw.Draw(mask).rectangle((x0 - soft, y0 - soft, x1 + soft, y1 + soft), fill=255)
+    mask.filter(ImageFilter.GaussianBlur(soft)).save(out)
+    return out
 
 
 @dataclass
@@ -102,6 +144,25 @@ class Still:
     caption: str
     elapsed_s: float
     graph: dict
+
+
+def _collect(cfg: Config, entry: dict, dest: Path) -> None:
+    """The saved image copied out to `dest`, and every output removed from ComfyUI's folder."""
+    images = entry.get("outputs", {}).get(SAVE_NODE, {}).get("images", [])
+    parts = [["output", *Path(i.get("subfolder", "")).parts, i["filename"]] for i in images]
+    try:
+        if SAVE_NODE in cached_nodes(entry):
+            raise RenderError("ComfyUI took this image from an earlier run, so nothing was drawn; use another seed")
+        if not parts:
+            raise RenderError("the run finished without an image")
+        try:
+            copy_out(cfg.comfy_io_dir, parts[0], dest)
+        except (ValueError, OSError) as error:
+            raise RenderError(f"unsafe output path from ComfyUI: {'/'.join(parts[0])} ({error})") from None
+    finally:
+        for p in parts:
+            if safe_parts(p):
+                remove_in(cfg.comfy_io_dir, p)
 
 
 def upsample(cfg: Config, references: list[Reference], request: str, *, name: str, timeout_s: float = 900) -> str:
@@ -155,22 +216,36 @@ def render_still(cfg: Config, references: list[Reference], request: str, *, seed
     finally:
         for file_name in copied:
             remove_in(cfg.comfy_io_dir, ["input", file_name])
-    images = entry.get("outputs", {}).get(SAVE_NODE, {}).get("images", [])
-    parts = [["output", *Path(i.get("subfolder", "")).parts, i["filename"]] for i in images]
-    try:
-        if SAVE_NODE in cached_nodes(entry):
-            raise RenderError("ComfyUI took this image from an earlier run, so nothing was drawn; use another seed")
-        if not parts:
-            raise RenderError("the run finished without an image")
-        try:
-            copy_out(cfg.comfy_io_dir, parts[0], dest)
-        except (ValueError, OSError) as error:
-            raise RenderError(f"unsafe output path from ComfyUI: {'/'.join(parts[0])} ({error})") from None
-    finally:
-        for p in parts:
-            if safe_parts(p):
-                remove_in(cfg.comfy_io_dir, p)
+    _collect(cfg, entry, dest)
     if caption is None:
         text = entry.get("outputs", {}).get(CAPTION_NODE, {}).get("text") or [""]
         caption = text[0] if isinstance(text, list) else str(text)
+    return Still(path=Path(dest), caption=caption, elapsed_s=elapsed, graph=workflow)
+
+
+def paint_event(cfg: Config, base: Path, box: list[float], references: list[Reference], caption: str, *, seed: int,
+                name: str, dest: Path) -> Still:
+    """`base` with `caption` (an event) painted into `box` from `references` (pictures of the event)."""
+    with Image.open(base) as image:
+        size = image.size
+    input_dir = private_dir(cfg.comfy_io_dir / "input")
+    copied = []
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            sources = [(base, f"{name}_base.png"), (event_mask(size, box, Path(tmp) / "mask.png"), f"{name}_mask.png"),
+                       *((ref.file, f"{name}_ref{i}.png") for i, ref in enumerate(references, start=1))]
+            try:
+                for source, file_name in sources:
+                    copy_into(source, input_dir, file_name)
+                    copied.append(file_name)
+            except (ValueError, OSError) as error:
+                raise RenderError(f"unsafe input folder: {error}") from None
+        workflow = paint_graph(copied[0], copied[1], copied[2:], caption, seed=seed, prefix=f"scenes/{name}")
+        started = time.monotonic()
+        entry = runtime.client(cfg).run(workflow, timeout_s=1800)
+        elapsed = time.monotonic() - started
+    finally:
+        for file_name in copied:
+            remove_in(cfg.comfy_io_dir, ["input", file_name])
+    _collect(cfg, entry, dest)
     return Still(path=Path(dest), caption=caption, elapsed_s=elapsed, graph=workflow)

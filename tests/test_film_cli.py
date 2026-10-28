@@ -29,7 +29,7 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr("studio.cli.face_tools", lambda cfg: TOOLS)
     monkeypatch.setattr("studio.cli.Claude", lambda cfg: FakeClaude(plan(3)))
 
-    def render_still(cfg, references, request, *, seed, size, name, dest):
+    def render_still(cfg, references, request, *, seed, size, name, dest, caption=None):
         Image.new("RGB", size).save(dest)
         return Still(path=dest, caption="caption", elapsed_s=2.0, graph={})
 
@@ -37,8 +37,11 @@ def setup(tmp_path, monkeypatch):
         dest.write_bytes(b"mp4")
         return SimpleNamespace(clip=dest, elapsed_s=27.0, peak_gib=42.7, reused_nodes=0)
 
+    monkeypatch.setattr("studio.film.upsample", lambda cfg, references, request, *, name: f"Caption: {request}")
     monkeypatch.setattr("studio.film.render_still", render_still)
     monkeypatch.setattr("studio.film.render_clip", render_clip)
+    monkeypatch.setattr("studio.film.triage.clip", lambda cfg, clip, fps: {"motion": 1.0, "still_head_s": 0.0,
+                                                                           "still_tail_s": 0.0, "color_drift": 0.4})
     monkeypatch.setattr("studio.film.prepare_still", lambda cfg, picture, out, size: picture)
     monkeypatch.setattr("studio.film.assemble.silent_film", lambda cfg, clips, out, **kw: out.write_bytes(b"film"))
     (tmp_path / "pictures").mkdir()
@@ -133,3 +136,23 @@ def test_film_make_takes_candidates_takes_and_event_pictures(setup, tmp_path):
     data = json.loads((films / "ride" / "film.json").read_text())
     assert (data["candidates"], data["takes"]) == (2, 1) and len(data["shots"][0]["stills"]) == 2
     assert {r["source"]: r["role"] for r in data["references"]}["blast.png"] == "event"
+
+
+def test_film_pick_and_film_takes_change_the_cut(setup):
+    cfg_file, pictures, films = setup
+    assert make(cfg_file, pictures, "--candidates", "2", "--takes", "1").exit_code == 0
+    run = lambda *args: CliRunner().invoke(app, ["--config", str(cfg_file), "film", *args])  # noqa: E731
+    picked = run("pick", "--name", "ride", "2=2")
+    assert picked.exit_code == 0, picked.output
+    assert "shot 2: still 2 has no takes" in picked.output and "PASS" not in picked.output
+    taken = run("takes", "--name", "ride", "--count", "1")
+    assert taken.exit_code == 0, taken.output
+    assert f"PASS  {films / 'ride' / 'film.mp4'}" in taken.output
+    data = json.loads((films / "ride" / "film.json").read_text())
+    assert data["shots"][1]["clip"] == "clips/shot2-2-1.mp4"
+    again = run("pick", "--name", "ride", "2=1.1", "3=2")
+    assert again.exit_code == 0 and "shot 3: still 2 has no takes" in again.output
+    bad = run("pick", "--name", "ride", "2=x")
+    assert bad.exit_code == 1 and "FAIL  2=x: use SHOT=STILL or SHOT=STILL.TAKE, for example 2=3 or 2=3.1" in bad.output
+    missing = run("pick", "--name", "ride", "2=1.7")
+    assert missing.exit_code == 1 and "FAIL  shot 2 has no take 7 of still 1" in missing.output

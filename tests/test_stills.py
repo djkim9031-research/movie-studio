@@ -144,3 +144,54 @@ def test_render_still_with_a_caption_draws_and_reports_that_caption(tmp_path, mo
     assert fake.graphs[0]["44"]["inputs"]["text"] == "A man on a balcony, patched."
     assert sorted(n["inputs"]["image"] for n in nodes(fake.graphs[0], "LoadImage")) == \
         ["x_still1_ref1.png", "x_still1_ref2.png", "x_still1_ref3.png"]
+
+
+def test_paint_graph_draws_only_inside_the_mask_and_pastes_back_through_it():
+    g = stills.paint_graph("base.png", "mask.png", ["blast.png"], "A small flash on the horizon.", seed=4,
+                           prefix="p")
+    by = {k: n for k, n in g.items()}
+    load = {n["inputs"]["image"]: k for k, n in g.items() if n["class_type"] == "LoadImage"}
+    assert set(load) == {"base.png", "mask.png", "blast.png"}
+    assert not nodes(g, "TextGenerate") and g["44"]["inputs"]["text"] == "A small flash on the horizon."
+    mask = next(k for k, n in g.items() if n["class_type"] == "ImageToMask")
+    assert by[mask]["inputs"]["image"] == [load["mask.png"], 0]
+    encode = next(k for k, n in g.items() if n["class_type"] == "VAEEncode")
+    assert by[encode]["inputs"]["pixels"] == [load["base.png"], 0]
+    noise = next(k for k, n in g.items() if n["class_type"] == "SetLatentNoiseMask")
+    assert by[noise]["inputs"] == {"samples": [encode, 0], "mask": [mask, 0]}
+    assert nodes(g, "KSampler")[0]["inputs"]["latent_image"] == [noise, 0]
+    refs = [v for k, v in by["46"]["inputs"].items() if k.startswith("images.")]
+    assert refs == [[load["base.png"], 0], [load["blast.png"], 0]]  # the base first, for its light and color
+    paste = nodes(g, "ImageCompositeMasked")[0]["inputs"]
+    assert paste["destination"] == [load["base.png"], 0] and paste["mask"] == [mask, 0]
+    assert nodes(g, "SaveImage")[0]["inputs"]["images"] == [next(k for k, n in g.items()
+                                                                 if n["class_type"] == "ImageCompositeMasked"), 0]
+
+
+def test_paint_event_masks_the_box_with_a_soft_edge_and_leaves_nothing_in_comfy_io(tmp_path, monkeypatch):
+    from PIL import Image
+
+    cfg = Config.model_validate({"data_root": str(tmp_path)})
+    seen = {}
+
+    class Painter(FakeComfy):
+        def run(self, workflow, timeout_s):
+            mask_name = next(n["inputs"]["image"] for n in workflow.values()
+                             if n["class_type"] == "LoadImage" and n["inputs"]["image"].endswith("_mask.png"))
+            with Image.open(tmp_path / "comfy-io" / "input" / mask_name) as m:
+                seen["mask"] = m.convert("L").copy()
+            return super().run(workflow, timeout_s)
+
+    monkeypatch.setattr("studio.gpu.runtime.client", lambda c: Painter(tmp_path))
+    base = tmp_path / "base.png"
+    Image.new("RGB", (1920, 1088), (20, 40, 60)).save(base)
+    dest = tmp_path / "painted.png"
+    result = stills.paint_event(cfg, base, [0.70, 0.30, 0.74, 0.36], make_refs(tmp_path, people=0, extras=1),
+                                "A small flash on the horizon.", seed=4, name="x_still1", dest=dest)
+    mask = seen["mask"]
+    assert mask.size == (1920, 1088)
+    assert mask.getpixel((round(0.72 * 1920), round(0.33 * 1088))) == 255  # inside the box
+    assert mask.getpixel((100, 100)) == 0 and mask.getpixel((round(0.72 * 1920), round(0.6 * 1088))) == 0
+    assert 0 < mask.getpixel((round(0.70 * 1920), round(0.33 * 1088))) < 255  # a soft edge
+    assert dest.read_bytes() == b"png" and result.caption == "A small flash on the horizon."
+    assert list((tmp_path / "comfy-io" / "input").iterdir()) == []
