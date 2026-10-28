@@ -9,8 +9,11 @@ import json
 import math
 import re
 import secrets
+import shutil
 import tempfile
 from pathlib import Path
+
+from PIL import Image
 
 from studio import bench, film_prompts, provenance, refs
 from studio.bench import render as render_clip
@@ -30,6 +33,11 @@ MODEL_SETS = ["face-detect", "face-id", "flux3-klein", *bench.VARIANTS[VIDEO]["m
 ALL_REFERENCES = 30  # pictures a film may use in all; each still takes at most MAX_REFERENCES of them
 LOCKED = {"wardrobe": "Clothes", "place": "Place", "light": "Light"}
 SPEECH_MAX = 0.1  # share of a generated track heard as speech above which it is made again, then dropped
+PAINT_TRIES = 3  # seeds tried for an event before its still is kept without it
+FAR_EVENT = 0.10  # an event at most this wide (a fraction of the frame) is told to stay small and far away
+PLACES = ("at the far left of the frame", "left of the frame's centre", "in the centre of the frame",
+          "right of the frame's centre", "at the far right of the frame")
+ORDINALS = ("second", "third", "fourth", "fifth", "sixth", "seventh", "eighth", "ninth", "tenth")
 COMMON = {"with", "from", "that", "this", "under", "over", "into", "onto", "their", "there", "each", "very", "some",
           "while", "near", "about"}
 
@@ -95,17 +103,44 @@ def _draw(cfg: Config, folder: Path, references: list[Reference], request: str, 
     return entry | ({"caption_fixed": lost} if lost else {})
 
 
+def paint_instruction(event: str, box: list[float], light: str, pictures: int) -> str:
+    """The edit that adds a shot's event: the plan's words, where across the frame its box is, the event pictures
+    (the images after the still), and for a far event, small."""
+    where = PLACES[min(len(PLACES) - 1, int((box[0] + box[2]) / 2 * len(PLACES)))]
+    names = [f"the {o}" for o in ORDINALS[:pictures]]
+    shown = names[0] + " image" if pictures == 1 else ", ".join(names[:-1]) + f" and {names[-1]} images"
+    small = " Keep it small and far away." if box[2] - box[0] <= FAR_EVENT else ""
+    return (f"Edit the first image: add {event.rstrip('.')}, {where}, as in {shown}.{small} "
+            f"Light: {light.rstrip('.')}. Keep everything else in the first image exactly the same.")
+
+
 def _paint(cfg: Config, folder: Path, shot: dict, light: str, base: Path, dest: Path, events: list[Reference],
-           name: str) -> dict:
-    """The shot's event painted into its box on `base`, from the event pictures it names."""
+           *, name: str, label: str, echo) -> dict:
+    """The shot's event added near its box on `base`, from the event pictures it names. An edit that drew nothing
+    there (less than a tenth of the box) is tried again with another seed; after PAINT_TRIES the still is the base."""
     chosen = [events[i - 1] for i in shot["event_pictures"]]
-    seed = secrets.randbelow(2**31)
-    painted = paint_event(cfg, base, shot["event_box"], chosen, f"{shot['event'].rstrip('.')}. {light.rstrip('.')}.",
-                          seed=seed, name=name, dest=dest)
+    box = shot["event_box"]
+    told = paint_instruction(shot["event"], box, light, len(chosen))
+    with Image.open(base) as image:
+        w, h = image.size
+    least = 0.1 * (box[2] - box[0]) * w * (box[3] - box[1]) * h
+    for tries in range(1, PAINT_TRIES + 1):
+        seed = secrets.randbelow(2**31)
+        painted = paint_event(cfg, base, box, chosen, told, seed=seed, name=name, dest=dest)
+        if painted.event_px >= least:
+            break
     write_private(dest.with_suffix(".graph.json"), json.dumps(painted.graph, indent=1) + "\n")
-    provenance.write(cfg, dest, kind="still", models=["flux3-klein"], inputs=[base, *(r.file for r in chosen)],
-                     params={"seed": seed, "box": shot["event_box"]})
-    return {"base": str(base.relative_to(folder)), "box": shot["event_box"], "seed": seed}
+    provenance.write(cfg, painted.edit, kind="still", models=["flux3-klein"], inputs=[base, *(r.file for r in chosen)],
+                     params={"seed": seed})
+    entry = {"base": str(base.relative_to(folder)), "edit": str(painted.edit.relative_to(folder)), "box": box,
+             "seed": seed, "tries": tries, "event_px": painted.event_px}
+    if painted.event_px < least:
+        shutil.copyfile(base, dest)
+        entry["missing"] = True
+        echo(f"event {label}: no event drawn near its box in {PAINT_TRIES} tries; the still is kept without it")
+    provenance.write(cfg, dest, kind="still", models=["flux3-klein"],
+                     inputs=[base] if entry.get("missing") else [base, painted.edit], params={"box": box})
+    return entry
 
 
 def _picked(shot: dict) -> int:
@@ -260,7 +295,8 @@ def make(cfg: Config, *, name: str, prompt: str, pictures: list[Path], shots: in
                 entry["file"] = str(dest.relative_to(folder))
                 if shot["event"]:
                     entry["painted"] = _paint(cfg, folder, shot, bible.light, base, dest, event_refs,
-                                              name=f"{name}_shot{n}-{c}-event")
+                                              name=f"{name}_shot{n}-{c}-event", label=f"shot {n} candidate {c}",
+                                              echo=echo)
                 shot["stills"].append(entry)
                 shot["still"] = shot["still"] or entry["file"]
                 _save(folder, data)
@@ -455,8 +491,9 @@ def review_page(data: dict) -> str:
                 f"{n['color_drift']}" if n else "")
     shots = []
     for s in data["shots"]:
-        stills = "".join(figure(f"Still {i}{' (picked)' if c['file'] == s.get('still') else ''}", image(c["file"]))
-                         for i, c in enumerate(s.get("stills", []), start=1))
+        stills = "".join(figure(f"Still {i}{' (picked)' if c['file'] == s.get('still') else ''}"
+                                f"{' (no event drawn)' if c.get('painted', {}).get('missing') else ''}",
+                                image(c["file"])) for i, c in enumerate(s.get("stills", []), start=1))
         takes = "".join(figure(f"Still {t['still']}, take {t['take']}{' (picked)' if t['file'] == s.get('clip') else ''}"
                                f"{numbers(t)}", video(t["file"])) for t in s.get("takes", []))
         shots.append(f'<h2>Shot {s["n"]}</h2><div class="grid">{stills}{takes}</div>'

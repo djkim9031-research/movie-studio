@@ -166,8 +166,13 @@ carry the rest. The user approved its first five requirements.
   To check the caption, the upsampler now runs on its own before the image is drawn from the caption.
 - Views: each view gets its own pictures, drawn from the first set picture alone, and every shot references its
   view. Re-framing with Qwen-Image-Edit-2511 and a multi-angle LoRA, the community default, is a later bench entry.
-- Events: a shot's still is drawn without its event; the event is painted into its box from the event pictures, the
-  rest of the still kept pixel for pixel. Events are capped at 30% of the frame width; bigger spectacle is implied.
+- Events: a shot's still is drawn without its event; then FLUX redraws the whole frame from an edit instruction (the
+  still first, the event pictures after it) and only what the edit added near the event's box is carried into the
+  still, so the rest keeps its own pixels. A masked redraw of the box alone was tried first and drew nothing (four
+  tries on a public harbor view): the model fills a small hole with more of what surrounds it. The redrawn frame
+  is softer (a quarter to almost half of the fine detail lost), so it is never used whole. An edit that drew nothing
+  near the box gets another seed, three tries in all, then the still is kept without its event and the review page
+  says so. Events are capped at 30% of the frame width; bigger spectacle is implied.
 - Takes: four takes of each shot's picked still instead of two takes of every still; `film pick` and `film takes`
   change the cut. Each take gets numbers that sort without faces (motion, still ends, color drift); the user picks.
 - Sound in layers: one bed under the whole film, Foley only for shots with their own sound (8 s windows), a speech

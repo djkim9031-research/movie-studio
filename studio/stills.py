@@ -3,12 +3,13 @@
 model draws in 16 steps. Reference copies and results are removed from ComfyUI's folders after each still."""
 
 import math
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFilter
+import cv2
+import numpy as np
+from PIL import Image
 
 from studio.config import Config
 from studio.fs import copy_into, copy_out, private_dir, remove_in, safe_parts
@@ -22,6 +23,9 @@ LANDSCAPE = (1920, 1088)
 PORTRAIT = (1088, 1920)
 CAPTION_NODE = "34"
 SAVE_NODE = "50"
+# Finding what an edit added: a quarter-scale change, smooth colour drift (a Gaussian of DRIFT quarter pixels) taken
+# out, weighted 0 at CHANGE_LO and 1 at CHANGE_HI levels, searched within the box grown by its own size on each side.
+SCALE, DRIFT, CHANGE_LO, CHANGE_HI = 4, 24, 6.0, 14.0
 
 
 def _upsampler(request: str, images: dict) -> dict:
@@ -108,36 +112,33 @@ def graph(files: list[str], squares: list[str], request: str, *, seed: int, size
     return g
 
 
-def paint_graph(base: str, mask: str, files: list[str], caption: str, *, seed: int, prefix: str) -> dict:
-    """`base` kept outside `mask` (white where the event goes); inside it the model draws `caption` with the base and
-    `files` as references, and the drawing is pasted back into the base through the mask, so nothing outside it
-    changes."""
-    if not len(files) + 1 <= MAX_REFERENCES:
-        raise ValueError(f"FLUX 3 Klein takes up to {MAX_REFERENCES} references, got {len(files) + 1}")
-    g = _model(caption, seed, ["72", 0], prefix, image=["73", 0])
-    load = _Loads(g)
-    pixels, region = load(base), load(mask)
-    g["70"] = {"class_type": "ImageToMask", "inputs": {"image": [region, 0], "channel": "red"}}
-    g["71"] = {"class_type": "VAEEncode", "inputs": {"pixels": [pixels, 0], "vae": ["42", 0]}}
-    g["72"] = {"class_type": "SetLatentNoiseMask", "inputs": {"samples": ["71", 0], "mask": ["70", 0]}}
-    g["46"] = _references(load, [base, *files])
-    g["73"] = {"class_type": "ImageCompositeMasked", "inputs": {"destination": [pixels, 0], "source": ["49", 0],
-                                                                "x": 0, "y": 0, "resize_source": False,
-                                                                "mask": ["70", 0]}}
-    return g
+def blend_event(base: np.ndarray, edit: np.ndarray, box: list[float]) -> tuple[np.ndarray, int]:
+    """`base` with what `edit` (the same frame redrawn with an event added) changed near `box` ([left, top, right,
+    bottom] fractions) carried over through a soft mask, and the number of pixels it carried over. Away from the box,
+    and wherever the edit only drifted in colour, the base stays exactly as it was; a sharp edge near the box that the
+    edit moved by a pixel or two comes over with the event. Float RGB arrays (h, w, 3)."""
+    h, w = base.shape[:2]
+    sw, sh = w // SCALE, h // SCALE
 
+    def small(a):
+        return cv2.GaussianBlur(cv2.resize(a, (sw, sh), interpolation=cv2.INTER_AREA), (0, 0), 1.0)
 
-def event_mask(size: tuple[int, int], box: list[float], out: Path) -> Path:
-    """White over all of `box` ([left, top, right, bottom] fractions), fading to black within about two soft widths
-    outside it (a tenth of the box's short side, 3 to 16 px), so an event blends without reaching far. Saved as RGB,
-    which LoadImage reads exactly."""
-    w, h = size
-    x0, y0, x1, y1 = (round(f * n) for f, n in zip(box, (w, h, w, h)))
-    soft = min(16, max(3, round(0.1 * min(x1 - x0, y1 - y0))))
-    mask = Image.new("L", size, 0)
-    ImageDraw.Draw(mask).rectangle((x0 - soft, y0 - soft, x1 + soft, y1 + soft), fill=255)
-    mask.filter(ImageFilter.GaussianBlur(soft / 2)).convert("RGB").save(out)
-    return out
+    d = small(edit) - small(base)
+    drift = cv2.GaussianBlur(d, (0, 0), DRIFT)
+    for _ in range(2):  # the drift again from the pixels that only drifted, so the event does not dim itself
+        calm = (np.abs(d - drift).max(axis=2) < CHANGE_LO).astype(np.float32)
+        drift = cv2.GaussianBlur(d * calm[..., None], (0, 0), DRIFT) / np.maximum(
+            cv2.GaussianBlur(calm, (0, 0), DRIFT), 1e-3)[..., None]
+    x0, y0, x1, y1 = box[0] * sw, box[1] * sh, box[2] * sw, box[3] * sh
+    near = np.zeros((sh, sw), np.float32)
+    near[int(max(0, 2 * y0 - y1)):int(min(sh, 2 * y1 - y0)), int(max(0, 2 * x0 - x1)):int(min(sw, 2 * x1 - x0))] = 1
+    change = np.abs(d - drift).max(axis=2) * near
+    weight = np.clip((change - CHANGE_LO) / (CHANGE_HI - CHANGE_LO), 0, 1)
+    weight = cv2.GaussianBlur(cv2.dilate(weight, np.ones((5, 5), np.uint8)), (0, 0), 1.5) * near
+    mask = cv2.resize(weight, (w, h), interpolation=cv2.INTER_LINEAR)[..., None]
+    shift = cv2.resize(drift, (w, h), interpolation=cv2.INTER_LINEAR)
+    out = np.where(mask > 0, base * (1 - mask) + (edit - shift) * mask, base)
+    return out, int((mask > 0.5).sum())
 
 
 @dataclass
@@ -146,6 +147,8 @@ class Still:
     caption: str
     elapsed_s: float
     graph: dict
+    edit: Path | None = None  # for a painted still: the redrawn frame its event came from
+    event_px: int = 0  # for a painted still: pixels carried over from the edit
 
 
 def _collect(cfg: Config, entry: dict, dest: Path) -> None:
@@ -227,27 +230,18 @@ def render_still(cfg: Config, references: list[Reference], request: str, *, seed
 
 def paint_event(cfg: Config, base: Path, box: list[float], references: list[Reference], caption: str, *, seed: int,
                 name: str, dest: Path) -> Still:
-    """`base` with `caption` (an event) painted into `box` from `references` (pictures of the event)."""
+    """`base` with an event added near `box`: the model redraws the whole frame from `caption` (an edit instruction)
+    with the base as the first image and `references` (pictures of the event) after it, then only what the edit
+    added near the box is carried into the base (`blend_event`). A masked redraw of the box alone draws nothing: the
+    model fills a small hole with more of what surrounds it. The redrawn frame is kept next to `dest` as -edit.png."""
     with Image.open(base) as image:
-        size = image.size
-    input_dir = private_dir(cfg.comfy_io_dir / "input")
-    copied = []
-    try:
-        with tempfile.TemporaryDirectory() as tmp:
-            sources = [(base, f"{name}_base.png"), (event_mask(size, box, Path(tmp) / "mask.png"), f"{name}_mask.png"),
-                       *((ref.file, f"{name}_ref{i}.png") for i, ref in enumerate(references, start=1))]
-            try:
-                for source, file_name in sources:
-                    copy_into(source, input_dir, file_name)
-                    copied.append(file_name)
-            except (ValueError, OSError) as error:
-                raise RenderError(f"unsafe input folder: {error}") from None
-        workflow = paint_graph(copied[0], copied[1], copied[2:], caption, seed=seed, prefix=f"scenes/{name}")
-        started = time.monotonic()
-        entry = runtime.client(cfg).run(workflow, timeout_s=1800)
-        elapsed = time.monotonic() - started
-    finally:
-        for file_name in copied:
-            remove_in(cfg.comfy_io_dir, ["input", file_name])
-    _collect(cfg, entry, dest)
-    return Still(path=Path(dest), caption=caption, elapsed_s=elapsed, graph=workflow)
+        size, pixels = image.size, np.asarray(image.convert("RGB"), dtype=np.float32)
+    edit = dest.with_name(f"{dest.stem}-edit.png")
+    still = render_still(cfg, [Reference("extra", base, base, base.name), *references], caption, seed=seed, size=size,
+                         name=name, dest=edit, caption=caption)
+    with Image.open(edit) as image:
+        redrawn = np.asarray(image.convert("RGB"), dtype=np.float32)
+    out, found = blend_event(pixels, redrawn, box)
+    Image.fromarray(out.round().clip(0, 255).astype(np.uint8)).save(dest)
+    return Still(path=Path(dest), caption=caption, elapsed_s=still.elapsed_s, graph=still.graph, edit=edit,
+                 event_px=found)

@@ -146,63 +146,86 @@ def test_render_still_with_a_caption_draws_and_reports_that_caption(tmp_path, mo
         ["x_still1_ref1.png", "x_still1_ref2.png", "x_still1_ref3.png"]
 
 
-def test_paint_graph_draws_only_inside_the_mask_and_pastes_back_through_it():
-    g = stills.paint_graph("base.png", "mask.png", ["blast.png"], "A small flash on the horizon.", seed=4,
-                           prefix="p")
-    by = {k: n for k, n in g.items()}
-    load = {n["inputs"]["image"]: k for k, n in g.items() if n["class_type"] == "LoadImage"}
-    assert set(load) == {"base.png", "mask.png", "blast.png"}
-    assert not nodes(g, "TextGenerate") and g["44"]["inputs"]["text"] == "A small flash on the horizon."
-    mask = next(k for k, n in g.items() if n["class_type"] == "ImageToMask")
-    assert by[mask]["inputs"]["image"] == [load["mask.png"], 0]
-    encode = next(k for k, n in g.items() if n["class_type"] == "VAEEncode")
-    assert by[encode]["inputs"]["pixels"] == [load["base.png"], 0]
-    noise = next(k for k, n in g.items() if n["class_type"] == "SetLatentNoiseMask")
-    assert by[noise]["inputs"] == {"samples": [encode, 0], "mask": [mask, 0]}
-    assert nodes(g, "KSampler")[0]["inputs"]["latent_image"] == [noise, 0]
-    refs = [v for k, v in by["46"]["inputs"].items() if k.startswith("images.")]
-    assert refs == [[load["base.png"], 0], [load["blast.png"], 0]]  # the base first, for its light and color
-    paste = nodes(g, "ImageCompositeMasked")[0]["inputs"]
-    assert paste["destination"] == [load["base.png"], 0] and paste["mask"] == [mask, 0]
-    assert nodes(g, "SaveImage")[0]["inputs"]["images"] == [next(k for k, n in g.items()
-                                                                 if n["class_type"] == "ImageCompositeMasked"), 0]
+def sky(size=(1920, 1088)):
+    """A smooth sky over a textured shore and a thin parapet line, as float RGB."""
+    import numpy as np
+
+    w, h = size
+    rows = np.linspace(0, 1, h, dtype=np.float32)[:, None, None]
+    img = np.broadcast_to(np.array([120, 150, 200], np.float32) * (1 - rows) + np.array([210, 190, 190]) * rows,
+                          (h, w, 3)).copy()
+    img[700:760] = 60 + 30 * np.random.default_rng(1).random((60, w, 1))
+    img[1000:1003] = 230
+    return img
 
 
-def test_paint_event_masks_the_box_with_a_soft_edge_and_leaves_nothing_in_comfy_io(tmp_path, monkeypatch):
+def blob(img, cx, cy, r=30, lift=120.0):
+    import numpy as np
+
+    h, w = img.shape[:2]
+    y, x = np.mgrid[0:h, 0:w]
+    return img + lift * np.exp(-((x - cx) ** 2 + (y - cy) ** 2) / (2 * r**2))[..., None]
+
+
+def test_only_what_the_edit_added_near_the_box_is_kept():
+    import numpy as np
+
+    base = sky()
+    drift = np.array([5.0, 1.0, -2.0], np.float32)  # the redrawn frame's colour shift
+    edit = base + drift
+    edit = blob(edit, 0.73 * 1920, 0.2 * 1088)  # beside the box, still near it
+    edit = blob(edit, 200, 200)  # far from the box
+    edit[1000:1003], edit[1002:1005] = base[1003:1006] + drift, 230  # the parapet moved by 2 px
+    out, found = stills.blend_event(base, edit, [0.60, 0.10, 0.70, 0.30])
+    assert found > 1000
+    assert out[int(0.2 * 1088), int(0.73 * 1920)] == pytest.approx(base[int(0.2 * 1088), int(0.73 * 1920)] + 120, abs=6)
+    assert np.array_equal(out[150:250, 150:250], base[150:250, 150:250])  # the far change stays out
+    assert np.array_equal(out[990:1010], base[990:1010])
+    assert np.array_equal(out[:, :800], base[:, :800])
+
+
+def test_an_edit_that_adds_nothing_near_the_box_finds_no_event():
+    import numpy as np
+
+    base = sky()
+    out, found = stills.blend_event(base, base + np.array([9.0, 0.0, -8.0], np.float32), [0.60, 0.10, 0.70, 0.30])
+    assert found == 0 and np.array_equal(out, base)
+
+
+def test_paint_event_edits_the_whole_frame_from_the_base_and_keeps_the_base_elsewhere(tmp_path, monkeypatch):
+    import numpy as np
     from PIL import Image
 
     cfg = Config.model_validate({"data_root": str(tmp_path)})
-    seen = {}
+    base_pixels = sky()
 
-    class Painter(FakeComfy):
+    class Editor(FakeComfy):
         def run(self, workflow, timeout_s):
-            mask_name = next(n["inputs"]["image"] for n in workflow.values()
-                             if n["class_type"] == "LoadImage" and n["inputs"]["image"].endswith("_mask.png"))
-            with Image.open(tmp_path / "comfy-io" / "input" / mask_name) as m:
-                seen["mode"], seen["mask"] = m.mode, m.convert("L").copy()
-            return super().run(workflow, timeout_s)
+            entry = super().run(workflow, timeout_s)
+            edited = blob(base_pixels + 3.0, 0.65 * 1920, 0.2 * 1088, lift=60.0)
+            Image.fromarray(edited.round().clip(0, 255).astype(np.uint8)).save(
+                self.root / "comfy-io" / "output" / "scenes" / "x_still1_00001_.png")
+            return entry
 
-    monkeypatch.setattr("studio.gpu.runtime.client", lambda c: Painter(tmp_path))
+    fake = Editor(tmp_path)
+    monkeypatch.setattr("studio.gpu.runtime.client", lambda c: fake)
     base = tmp_path / "base.png"
-    Image.new("RGB", (1920, 1088), (20, 40, 60)).save(base)
+    Image.fromarray(base_pixels.round().astype(np.uint8)).save(base)
     dest = tmp_path / "painted.png"
-    result = stills.paint_event(cfg, base, [0.70, 0.30, 0.74, 0.36], make_refs(tmp_path, people=0, extras=1),
-                                "A small flash on the horizon.", seed=4, name="x_still1", dest=dest)
-    mask, mode = seen["mask"], seen["mode"]
-    assert mask.size == (1920, 1088) and mode == "RGB"  # LoadImage reads RGB exactly
-    x0, y0, x1, y1 = round(0.70 * 1920), round(0.30 * 1088), round(0.74 * 1920), round(0.36 * 1088)
-    assert min(mask.getpixel((x, y)) for x in range(x0, x1, 4) for y in range(y0, y1, 4)) >= 240  # the whole box
-    assert mask.getpixel((100, 100)) == 0 and mask.getpixel(((x0 + x1) // 2, y1 + 60)) == 0
-    assert 0 < mask.getpixel((x0 - 6, (y0 + y1) // 2)) < 255  # a soft edge just outside
-    assert dest.read_bytes() == b"png" and result.caption == "A small flash on the horizon."
+    told = "Edit the first image: add a small flash on the horizon. Keep everything else exactly the same."
+    result = stills.paint_event(cfg, base, [0.60, 0.10, 0.70, 0.30], make_refs(tmp_path, people=0, extras=1), told,
+                                seed=4, name="x_still1", dest=dest)
+    (g,) = fake.graphs
+    assert not nodes(g, "SetLatentNoiseMask") and not nodes(g, "ImageCompositeMasked") and not nodes(g, "TextGenerate")
+    assert g["44"]["inputs"]["text"] == told and nodes(g, "KSampler")[0]["inputs"]["seed"] == 4
+    (latent,) = nodes(g, "EmptyFlux2LatentImage")
+    assert (latent["inputs"]["width"], latent["inputs"]["height"]) == (1920, 1088)
+    refs = [g[v[0]]["inputs"]["image"] for k, v in g["46"]["inputs"].items() if k.startswith("images.")]
+    assert refs == ["x_still1_ref1.png", "x_still1_ref2.png"]  # the base first
+    painted = np.asarray(Image.open(dest)).astype(np.float32)
+    kept = np.asarray(Image.open(base)).astype(np.float32)
+    assert np.array_equal(painted[:, :800], kept[:, :800])
+    assert painted[int(0.2 * 1088), int(0.65 * 1920)].mean() == pytest.approx(
+        kept[int(0.2 * 1088), int(0.65 * 1920)].mean() + 60, abs=4)
+    assert result.event_px > 1000 and result.edit == tmp_path / "painted-edit.png" and result.edit.exists()
     assert list((tmp_path / "comfy-io" / "input").iterdir()) == []
-
-
-def test_a_large_event_box_keeps_its_soft_edge_close(tmp_path):
-    from PIL import Image
-
-    out = stills.event_mask((1920, 1088), [0.2, 0.2, 0.5, 0.7], tmp_path / "mask.png")
-    with Image.open(out) as m:
-        mask = m.convert("L")
-    x1 = round(0.5 * 1920)
-    assert mask.getpixel((x1 - 2, 500)) >= 240 and mask.getpixel((x1 + 48, 500)) == 0

@@ -218,7 +218,8 @@ The film is silent: Wan 2.2 makes no sound. The shot plan already holds a sound 
 - `look/setN.png`, `look/sheetN.png` and `look/viewV-N.png`: the set picture, character sheet and view picture
   candidates (V is the view's place in the bible); the stills are drawn from the first of each
 - `stills/shotN-C.png` and `stills/shotN-C.graph.json`: candidate C of shot N's still and the ComfyUI graph that
-  drew it; for a shot with an event, `stills/shotN-C-base.png` is the still before the event was painted in
+  drew it; for a shot with an event, `stills/shotN-C-base.png` is the still before the event was painted in and
+  `stills/shotN-C-edit.png` the frame redrawn with the event, of which only the event is kept
 - `clips/shotN-C-T.mp4`: take T of still C, silent; the film uses the picks in `film.json`
 - `sound/bed.wav` (from `sound/bedN.wav` segments) and `sound/shotN.wav`: the ambience under the whole film and each
   Foley shot's track, 1.5 s longer at both ends, once sound is added

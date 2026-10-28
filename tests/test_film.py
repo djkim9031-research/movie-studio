@@ -21,9 +21,13 @@ def cfg(tmp_path):
 TRIAGE = {"motion": 1.2, "still_head_s": 0.0, "still_tail_s": 0.25, "color_drift": 0.8}
 
 
+painted_px = []  # what the next paints find, in order; 5000 pixels once it is empty
+
+
 @pytest.fixture
 def renders(monkeypatch):
     calls = []
+    painted_px.clear()
 
     def upsample(cfg, references, request, *, name):
         calls.append(("upsample", name))
@@ -35,9 +39,12 @@ def renders(monkeypatch):
         return Still(path=dest, caption=caption or f"caption {name}", elapsed_s=1.5, graph={"50": {}})
 
     def paint_event(cfg, base, box, references, caption, *, seed, name, dest):
-        calls.append(("paint", name, base.name, box, [r.source for r in references], caption))
-        Image.open(base).save(dest)
-        return Still(path=dest, caption=caption, elapsed_s=2.0, graph={"60": {}})
+        calls.append(("paint", name, base.name, box, [r.source for r in references], caption, seed))
+        edit = dest.with_name(f"{dest.stem}-edit.png")
+        Image.open(base).save(edit)
+        found = painted_px.pop(0) if painted_px else 5000
+        Image.new("RGB", Image.open(base).size, (200, 200, 200) if found else (10, 10, 10)).save(dest)
+        return Still(path=dest, caption=caption, elapsed_s=2.0, graph={"60": {}}, edit=edit, event_px=found)
 
     def render_clip(cfg, variant, start, prompt, seconds, seed, name, dest, size):
         calls.append(("clip", name, prompt, variant, seconds, size, start.name))
@@ -129,20 +136,59 @@ def test_an_event_is_painted_into_its_box_and_the_clip_starts_from_the_painted_s
     make(cfg, tmp_path, FakeClaude(told), candidates=1, takes=1, events=[blast])
     paints = [c for c in renders if c[0] == "paint"]
     assert len(paints) == 1
-    _, name, base, box, refs, caption = paints[0]
+    _, name, base, box, refs, caption, _ = paints[0]
     assert (name, base, box, refs) == ("ride_shot2-1-event", "shot2-1-base.png", [0.70, 0.30, 0.74, 0.36],
                                        ["blast.png"])
-    assert phrase in caption and LIGHT in caption
+    assert caption == (f"Edit the first image: add {phrase}, right of the frame's centre, as in the second image. "
+                       f"Keep it small and far away. Light: {LIGHT}. Keep everything else in the first image exactly "
+                       f"the same.")
     starts = {c[1]: c[6] for c in renders if c[0] == "clip"}
     assert starts["ride_shot2-1-1"] == "shot2-1.png"
     folder = cfg.projects_dir / "films" / "ride"
     assert (folder / "stills" / "shot2-1-base.png").exists()
     shot = json.loads((folder / "film.json").read_text())["shots"][1]
     painted = shot["stills"][0]["painted"]
-    assert (painted["base"], painted["box"]) == ("stills/shot2-1-base.png", [0.70, 0.30, 0.74, 0.36])
-    assert isinstance(painted["seed"], int)
-    lineage = json.loads(provenance.sidecar(folder / "stills" / "shot2-1.png").read_text())
+    assert (painted["base"], painted["edit"], painted["box"]) == (
+        "stills/shot2-1-base.png", "stills/shot2-1-edit.png", [0.70, 0.30, 0.74, 0.36])
+    assert isinstance(painted["seed"], int) and (painted["tries"], painted["event_px"]) == (1, 5000)
+    assert "missing" not in painted
+    lineage = json.loads(provenance.sidecar(folder / "stills" / "shot2-1-edit.png").read_text())
     assert [i["path"].rsplit("/", 1)[1] for i in lineage["inputs"]] == ["shot2-1-base.png", "extra2.png"]
+    lineage = json.loads(provenance.sidecar(folder / "stills" / "shot2-1.png").read_text())
+    assert [i["path"].rsplit("/", 1)[1] for i in lineage["inputs"]] == ["shot2-1-base.png", "shot2-1-edit.png"]
+
+
+def test_an_event_the_edit_did_not_draw_is_tried_again_with_another_seed(cfg, tmp_path, renders):
+    blast = write(tmp_path / "blast.png", (1300, 800), exif=False)
+    told = plan(3)
+    told["shots"][1].update(event="a small flash on the horizon line at the far left, about 6% of the frame width",
+                            event_box=[0.10, 0.30, 0.16, 0.36], event_pictures=[1])
+    painted_px.extend([0, 5000])
+    make(cfg, tmp_path, FakeClaude(told), candidates=1, takes=1, events=[blast])
+    paints = [c for c in renders if c[0] == "paint"]
+    assert len(paints) == 2 and paints[0][6] != paints[1][6]
+    assert "at the far left of the frame" in paints[0][5]
+    painted = json.loads((cfg.projects_dir / "films" / "ride" / "film.json").read_text())["shots"][1]["stills"][0][
+        "painted"]
+    assert (painted["tries"], painted["seed"], painted["event_px"]) == (2, paints[1][6], 5000)
+
+
+def test_an_event_never_drawn_leaves_the_base_still_and_says_so(cfg, tmp_path, renders, capsys):
+    blast = write(tmp_path / "blast.png", (1300, 800), exif=False)
+    told = plan(3)
+    told["shots"][1].update(event="a long grey wall of water along the horizon, about 30% of the frame width",
+                            event_box=[0.35, 0.30, 0.65, 0.40], event_pictures=[1])
+    painted_px.extend([0, 0, 0])
+    make(cfg, tmp_path, FakeClaude(told), candidates=1, takes=1, events=[blast])
+    paints = [c for c in renders if c[0] == "paint"]
+    assert len(paints) == film.PAINT_TRIES == 3
+    assert "in the centre of the frame" in paints[0][5] and "small and far away" not in paints[0][5]
+    folder = cfg.projects_dir / "films" / "ride"
+    painted = json.loads((folder / "film.json").read_text())["shots"][1]["stills"][0]["painted"]
+    assert painted["missing"] is True and painted["tries"] == 3
+    assert (folder / "stills" / "shot2-1.png").read_bytes() == (folder / "stills" / "shot2-1-base.png").read_bytes()
+    assert "shot 2 candidate 1: no event drawn near its box in 3 tries" in capsys.readouterr().out
+    assert "Still 1 (picked) (no event drawn)" in (folder / "review.html").read_text()
 
 
 def test_pick_changes_the_film_and_takes_fill_in_what_a_pick_needs(cfg, tmp_path, renders):
