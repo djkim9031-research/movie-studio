@@ -113,6 +113,12 @@ def test_an_empty_prompt_in_a_shot_is_refused():
         write(FakeClaude(bad))
 
 
+def test_the_plan_has_room_for_long_thinking():
+    claude = FakeClaude(plan(4))
+    write(claude)
+    assert claude.calls[0][2]["max_tokens"] == 64000
+
+
 def test_a_reply_cut_off_at_the_token_limit_is_an_error():
     with pytest.raises(film_prompts.PromptError, match="cut off"):
         write(FakeClaude(plan(4), stop_reason="max_tokens"))

@@ -13,6 +13,7 @@ from studio.doctor import (Check, check_claude_cache, check_disk, check_driver, 
                            check_private, exit_code, guarded)
 from studio.gpu.preflight import GpuMemory, GpuProcess, Verdict
 from studio.media import ffmpeg
+from tests.test_client import sse
 
 
 def test_check_disk_passes_when_enough_space_is_free(tmp_path):
@@ -54,7 +55,7 @@ def claude_with_replies(tmp_path, monkeypatch, cache_reads):
         body = {"id": "msg", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
                 "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn", "stop_sequence": None,
                 "usage": usage}
-        return httpx2.Response(200, json=body, headers={"request-id": "req"})
+        return sse(body, headers={"request-id": "req"})
 
     ledger = Ledger(cfg.ledger_dir, cfg.claude, clock=lambda: datetime(2026, 10, 26))
     return Claude(cfg, http_client=httpx2.Client(transport=httpx2.MockTransport(handler)), ledger=ledger), sent

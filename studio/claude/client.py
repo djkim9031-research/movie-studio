@@ -37,8 +37,10 @@ class Claude:
         target = self.cfg.claude.routes[route]
         self.ledger.check_caps(film)
         output_config = {"effort": target.effort, **params.pop("output_config", {})}
-        message = self.client.messages.create(model=target.model, output_config=output_config, **params)
-        request_id = getattr(message, "_request_id", None)
+        # Streamed: the SDK refuses a plain request whose max_tokens could take more than 10 minutes.
+        with self.client.messages.stream(model=target.model, output_config=output_config, **params) as stream:
+            message = stream.get_final_message()
+        request_id = stream.request_id
         try:
             self.ledger.record(route=route, film=film, hops=hops_from_message(message, target.model),
                                request_id=request_id)

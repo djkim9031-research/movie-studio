@@ -314,7 +314,7 @@ def problems(made: FilmPlan, user_prompt: str, events: int = 0) -> list[str]:
 
 
 def _ask(claude, film: str, text: str, shots: int) -> FilmPlan:
-    message = claude.create("film_prompts", film=film, max_tokens=16000,
+    message = claude.create("film_prompts", film=film, max_tokens=64000,
                             system=[{"type": "text", "text": SYSTEM, "cache_control": {"type": "ephemeral"}}],
                             messages=[{"role": "user", "content": [{"type": "text", "text": text}]}],
                             output_config={"format": {"type": "json_schema", "schema": SCHEMA}})

@@ -48,7 +48,7 @@ saved next to it as `stillN.graph.json`.
   `studio models fetch` keep 300 GB free on the disk of your home folder (`disk.home_min_free_gb` in
   `config/studio.yaml`), so with that default start with about 475 GB free, or lower the floor.
 - An Anthropic API key. Claude Opus 5.5 writes the two prompts of a scene for about $0.03 and a film's shot plan for
-  about $0.08.
+  about $0.30.
 - A Hugging Face read token, after accepting the licenses of
   [Lightricks/LTX-2.5](https://huggingface.co/Lightricks/LTX-2.5) and
   [black-forest-labs/flux-3-image-klein-comfy](https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy)
@@ -190,7 +190,7 @@ projects/films/NAME/film.mp4 and review.html (every candidate and take; the ones
    The folder needs at least one picture of the place without people: the set picture is drawn from it. Pictures of
    other people are not used. Four shots with two views take about 2 hours with the defaults: 24 stills at about two
    and a half minutes, 16 clips at three, and the model loads; `--candidates 1 --takes 1` takes about half an hour. Claude's shot plan
-   costs about $0.08, up to three times that when it is sent back. Claude stages the shots from your words: the
+   costs about $0.30, up to three times that when it is sent back. Claude stages the shots from your words: the
    person looks at what happens (wide shots from behind, reaction shots at three quarters), not into the lens unless
    you ask.
 

@@ -38,6 +38,24 @@ def test_read_api_key_names_a_missing_file(tmp_path):
         read_api_key(tmp_path / "a.env")
 
 
+def sse(body, headers=None):
+    """`body`, a whole message with text blocks, as the event stream the API sends for it."""
+    events = [("message_start", {"type": "message_start",
+                                 "message": {**body, "content": [], "stop_reason": None, "stop_sequence": None}})]
+    for i, block in enumerate(body["content"]):
+        events += [("content_block_start", {"type": "content_block_start", "index": i,
+                                            "content_block": {"type": "text", "text": ""}}),
+                   ("content_block_delta", {"type": "content_block_delta", "index": i,
+                                            "delta": {"type": "text_delta", "text": block["text"]}}),
+                   ("content_block_stop", {"type": "content_block_stop", "index": i})]
+    events += [("message_delta", {"type": "message_delta",
+                                  "delta": {"stop_reason": body["stop_reason"], "stop_sequence": None},
+                                  "usage": {"output_tokens": body["usage"]["output_tokens"]}}),
+               ("message_stop", {"type": "message_stop"})]
+    text = "".join(f"event: {name}\ndata: {json.dumps(data)}\n\n" for name, data in events)
+    return httpx2.Response(200, content=text.encode(), headers={"content-type": "text/event-stream", **(headers or {})})
+
+
 def reply(stop_reason="end_turn"):
     return {"id": "msg_1", "type": "message", "role": "assistant", "model": "claude-opus-5-5",
             "content": [{"type": "text", "text": "ok"}] if stop_reason == "end_turn" else [],
@@ -66,7 +84,7 @@ def make_claude(tmp_path, monkeypatch, stop_reason="end_turn", month_cap=40.0, e
     def handler(request):
         seen.urls.append(str(request.url))
         seen.bodies.append(json.loads(request.content))
-        return httpx2.Response(200, json=reply(stop_reason), headers={"request-id": "req_1"})
+        return sse(reply(stop_reason), headers={"request-id": "req_1"})
 
     ledger = Ledger(cfg.ledger_dir, cfg.claude, clock=lambda: CLOCK)
     http = httpx2.Client(transport=httpx2.MockTransport(handler))
@@ -83,6 +101,14 @@ def test_create_sends_the_route_model_and_effort_and_records_the_cost(tmp_path, 
     assert seen.bodies[0]["model"] == "claude-opus-5-5"
     assert seen.bodies[0]["output_config"] == {"effort": "low"}
     assert ledger.month_total("2031-02") == pytest.approx(4.0)
+
+
+def test_create_streams_the_reply_and_records_its_request_id(tmp_path, monkeypatch):
+    claude, ledger, seen = make_claude(tmp_path, monkeypatch)
+    message = say_hi(claude)
+    assert seen.bodies[0]["stream"] is True  # a long reply is not cut off by the client's 10-minute guard
+    assert message.stop_reason == "end_turn" and message.content[0].text == "ok"
+    assert ledger.entries("2031-02")[0]["request_id"] == "req_1"
 
 
 def test_requests_go_to_the_anthropic_api_even_if_the_environment_names_another_host(tmp_path, monkeypatch):
