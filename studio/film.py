@@ -5,7 +5,6 @@ Sound is added to a finished film by a second step. Pictures and frames stay on 
 import contextlib
 import html
 import json
-import re
 import secrets
 import tempfile
 from pathlib import Path
@@ -26,7 +25,6 @@ VIDEO = "wan-4step-1022"
 FPS = 16  # Wan 2.2's frame rate
 MODEL_SETS = ["face-detect", "face-id", "flux3-klein", *bench.VARIANTS[VIDEO]["models"]]
 ALL_REFERENCES = 30  # pictures a film may use in all; each still takes at most MAX_REFERENCES of them
-NAMED = re.compile(r"\bimages?\s+(\d+(?:\s*(?:,|and|to|-|–|&)\s*\d+)*)", re.IGNORECASE)
 
 
 class FilmError(RuntimeError):
@@ -59,15 +57,6 @@ def _look_reference(path: Path) -> Reference:
     _, square = refs.extra_versions(refs.load(path))
     return Reference("extra", path, refs.save_png(square, path.with_name(f"{path.stem}_square.png")),
                      f"{path.parent.name}/{path.name}")
-
-
-def _named_events(request: str, events: list[Reference], first: int) -> list[Reference]:
-    """The event pictures a still request names by number, with those numbered before them, so that every picture
-    keeps the number the request uses. A shot that names none gets none: the image model copies from every reference
-    it is given."""
-    numbers = {int(n) for run in NAMED.findall(request) for n in re.findall(r"\d+", run)}
-    last = max((n for n in numbers if first <= n < first + len(events)), default=first - 1)
-    return events[:last - first + 1]
 
 
 def _draw(cfg: Config, references: list[Reference], request: str, *, seed: int, size: tuple[int, int], name: str,
@@ -105,9 +94,8 @@ def make(cfg: Config, *, name: str, prompt: str, pictures: list[Path], shots: in
         raise FilmError(f"event pictures not usable: {', '.join(sorted(missing))}")
     if len(places) > MAX_REFERENCES:
         raise FilmError(f"{len(places)} pictures of the place; one still takes at most {MAX_REFERENCES}")
-    if len(people) + 2 + len(event_refs) > MAX_REFERENCES:
-        raise FilmError(f"a shot's still takes at most {MAX_REFERENCES} references: {len(people)} photos, the sheet, "
-                        f"the set and {len(event_refs)} event pictures")
+    if len(event_refs) > MAX_REFERENCES:
+        raise FilmError(f"{len(event_refs)} event pictures; an event is painted from at most {MAX_REFERENCES}")
     orientation = "portrait" if portrait else "landscape"
     plan = film_prompts.write(claude, film=f"film-{name}", user_prompt=prompt, report=report,
                               orientation=orientation, shots=shots, seconds=seconds, events=shown)
@@ -144,8 +132,7 @@ def make(cfg: Config, *, name: str, prompt: str, pictures: list[Path], shots: in
             n = shot["n"]
             for c in range(1, candidates + 1):
                 seed, dest = secrets.randbelow(2**31), stills_dir / f"shot{n}-{c}.png"
-                shown_here = _named_events(shot["still_request"], event_refs, len(people) + 3)
-                still = _draw(cfg, [*people, *anchors, *shown_here], shot["still_request"], seed=seed, size=size,
+                still = _draw(cfg, [*people, *anchors], shot["still_request"], seed=seed, size=size,
                               name=f"{name}_shot{n}-{c}", dest=dest)
                 shot["stills"].append({"file": f"stills/{dest.name}", "seed": seed, "caption": still.caption,
                                        "s": round(still.elapsed_s, 1)})
